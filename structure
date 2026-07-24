@@ -1,0 +1,72 @@
+.
+├── .env.example
+├── .gitignore
+├── README.md
+├── attack_agent
+│   ├── Dockerfile
+│   ├── __init__.py
+│   ├── agent.py
+│   ├── payload_generator.py
+│   ├── planner.py
+│   ├── prompts
+│   │   ├── payload_generator.txt
+│   │   └── planner.txt
+│   └── schemas.py
+├── controller
+│   ├── __init__.py
+│   ├── evaluate.py
+│   ├── reset_environment.py
+│   └── run_experiment.py
+├── data
+│   ├── baseline
+│   │   ├── knowledge_base
+│   │   │   └── .gitkeep
+│   │   └── tickets
+│   │       └── .gitkeep
+│   └── runtime
+│       ├── inbox
+│       │   └── .gitkeep
+│       ├── knowledge_base
+│       │   └── .gitkeep
+│       └── vector_store
+│           └── .gitkeep
+├── docker-compose.yml
+├── experiments
+│   ├── phase1_ipi
+│   │   ├── cases.json
+│   │   └── fixtures
+│   │       └── .gitkeep
+│   ├── phase2_data_attack
+│   │   ├── cases.json
+│   │   └── fixtures
+│   │       └── .gitkeep
+│   └── phase3_attack_chain
+│       ├── cases.json
+│       └── fixtures
+│           └── .gitkeep
+├── logs
+│   ├── attack_agent
+│   │   └── .gitkeep
+│   ├── results
+│   │   └── .gitkeep
+│   └── victim_agent
+│       └── .gitkeep
+├── requirements.txt
+├── tests
+│   ├── __init__.py
+│   ├── test_policy.py
+│   ├── test_reset.py
+│   └── test_tools.py
+└── victim_agent
+    ├── Dockerfile
+    ├── __init__.py
+    ├── agent.py
+    ├── policy.py
+    ├── prompts
+    │   └── system.txt
+    └── tools
+        ├── __init__.py
+        ├── knowledge_base.py
+        └── ticket.py
+
+27 directories, 43 files

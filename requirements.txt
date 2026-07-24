@@ -1,0 +1,5 @@
+ollama
+pydantic
+chromadb
+pytest
+requests

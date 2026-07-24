@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# Runtime experiment data
+data/runtime/inbox/*
+data/runtime/knowledge_base/*
+data/runtime/vector_store/*
+
+# Keep empty runtime directories
+!data/runtime/inbox/.gitkeep
+!data/runtime/knowledge_base/.gitkeep
+!data/runtime/vector_store/.gitkeep
+
+# Experiment logs
+logs/attack_agent/*
+logs/victim_agent/*
+logs/results/*
+
+# Keep empty log directories
+!logs/attack_agent/.gitkeep
+!logs/victim_agent/.gitkeep
+!logs/results/.gitkeep
+
+# Local model and vector database files
+*.gguf
+*.bin
+*.index
+chroma.sqlite3
+
+# IDE and operating system files
+.vscode/
+.idea/
+.DS_Store
