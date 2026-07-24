@@ -1,5 +1,8 @@
-ollama
-pydantic
-chromadb
-pytest
-requests
+# Phase 1 runtime dependencies
+#
+# The current Victim Agent, controller scaffolding, ticket tools, and
+# deterministic knowledge-base search use only the Python standard library.
+#
+# Keep this file intentionally empty until a runtime package is actually
+# imported by production code. Do not add prospective dependencies such as
+# chromadb, ollama, pydantic, or requests before they are needed.

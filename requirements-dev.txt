@@ -1,0 +1,13 @@
+# Phase 1 test dependencies
+#
+# Install with:
+#
+#   python3 -m pip install -r requirements-dev.txt
+#
+# Runtime dependencies are included first. requirements.txt is currently
+# intentionally empty because Phase 1 production code uses only the Python
+# standard library.
+
+-r requirements.txt
+
+pytest==9.1.1
