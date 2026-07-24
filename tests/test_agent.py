@@ -1,18 +1,33 @@
 """
 Tests for the model-agnostic Victim Agent runtime.
 
-These tests do not contact a real Ollama server and do not require any
-language model to be installed.
+These tests do not contact a real Ollama server and do not require a language
+model to be installed. Model responses and tool implementations are replaced
+with deterministic fakes so agent orchestration can be tested independently
+from model quality and filesystem fixtures.
 
-The model API and Victim Agent tools are replaced with deterministic fake
-implementations. This allows the orchestration, policy enforcement, session
-restrictions, tool loop, structured-output validation, and logging behavior
-to be tested independently from model behavior.
+Coverage includes:
+
+- ticket-read success and session-state tracking
+- missing and malformed tickets
+- human review after a failed ticket-read attempt
+- immediate termination after deterministic or session policy blocks
+- loop detection after policy normalization
+- broad tool-exception containment
+- proxy-free and redirect-free Ollama requests
+- controlled runtime configuration parsing
+- structured output validation and reproducibility logging
 """
 
 from __future__ import annotations
 
+import io
 import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -26,16 +41,32 @@ import victim_agent.agent as agent
 # ---------------------------------------------------------------------------
 
 
+RUNTIME_ENVIRONMENT_VARIABLES = {
+    "VICTIM_MODEL",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_ALLOWED_HOSTS",
+    "OLLAMA_ALLOWED_PORTS",
+    "VICTIM_STRUCTURED_MODE",
+    "VICTIM_TEMPERATURE",
+    "VICTIM_NUM_CTX",
+    "VICTIM_MAX_STEPS",
+    "VICTIM_LLM_TIMEOUT_SECONDS",
+    "VICTIM_LOG_DIR",
+}
+
+
 @pytest.fixture
 def isolated_agent_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, Path]:
-    """
-    Isolate the Victim Agent system prompt and log directory.
+    """Isolate the system prompt, environment, metadata cache, and logs."""
 
-    Tests never write to the real logs/victim_agent directory.
-    """
+    for variable_name in RUNTIME_ENVIRONMENT_VARIABLES:
+        monkeypatch.delenv(
+            variable_name,
+            raising=False,
+        )
 
     prompt_path = tmp_path / "system.txt"
     prompt_path.write_text(
@@ -60,11 +91,17 @@ def isolated_agent_runtime(
         log_dir,
     )
 
-    # Keep URL validation independent from the user's shell environment.
     monkeypatch.setenv(
         "OLLAMA_ALLOWED_HOSTS",
         "localhost,127.0.0.1",
     )
+
+    monkeypatch.setenv(
+        "OLLAMA_ALLOWED_PORTS",
+        "11434",
+    )
+
+    agent._OLLAMA_METADATA_CACHE.clear()
 
     return {
         "prompt_path": prompt_path,
@@ -76,12 +113,7 @@ def isolated_agent_runtime(
 def fake_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> list[dict[str, Any]]:
-    """
-    Replace real ticket and knowledge-base tools with controlled fakes.
-
-    The returned list records every tool operation that was actually
-    executed by agent.py.
-    """
+    """Replace real tools with controlled fakes and record executions."""
 
     executed_calls: list[dict[str, Any]] = []
 
@@ -105,9 +137,7 @@ def fake_tools(
                 "ticket": {
                     "ticket_id": ticket_id,
                     "subject": "Unable to connect to company VPN",
-                    "description": (
-                        "I cannot connect to the company VPN."
-                    ),
+                    "description": "I cannot connect to the company VPN.",
                     "status": "open",
                     "notes": [],
                 }
@@ -241,7 +271,7 @@ def make_human_review(
     ),
     reason: str = "The request requires human review.",
 ) -> str:
-    """Create one valid human-review decision."""
+    """Create one valid human-review model decision."""
 
     return json.dumps(
         {
@@ -253,15 +283,54 @@ def make_human_review(
     )
 
 
+def make_error(
+    final_response: str = "The request could not be processed safely.",
+    reason: str = "A processing error occurred.",
+) -> str:
+    """Create one valid error model decision."""
+
+    return json.dumps(
+        {
+            "status": "error",
+            "reason": reason,
+            "tool_call": None,
+            "final_response": final_response,
+        }
+    )
+
+
+def sample_runtime_metadata(
+    model: str = "test-model:latest",
+) -> dict[str, Any]:
+    """Create stable fake Ollama/model reproducibility metadata."""
+
+    return {
+        "metadata_status": "complete",
+        "ollama_version": "0.0.0-test",
+        "model": {
+            "requested_name": model,
+            "resolved_name": model,
+            "digest": "sha256:test-model-digest",
+            "modified_at": "2026-07-24T00:00:00Z",
+            "size_bytes": 123456,
+            "details": {
+                "family": "test",
+                "parameter_size": "8B",
+                "quantization_level": "Q4_K_M",
+            },
+            "capabilities": ["completion"],
+            "parameters_sha256": "parameters-hash",
+            "template_sha256": "template-hash",
+        },
+        "collection_errors": [],
+    }
+
+
 def install_model_sequence(
     monkeypatch: pytest.MonkeyPatch,
     outputs: list[str],
 ) -> list[dict[str, Any]]:
-    """
-    Replace _call_ollama with a deterministic sequence of responses.
-
-    The returned list stores a snapshot of each model request.
-    """
+    """Replace _call_ollama with deterministic sequential responses."""
 
     output_iterator = iter(outputs)
     recorded_calls: list[dict[str, Any]] = []
@@ -304,6 +373,9 @@ def install_model_sequence(
                 "model": model,
                 "done": True,
                 "eval_count": 10,
+                "runtime_metadata": sample_runtime_metadata(
+                    model
+                ),
             },
         )
 
@@ -319,7 +391,7 @@ def install_model_sequence(
 def run_test_agent(
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Run the Victim Agent with consistent test configuration."""
+    """Run the Victim Agent with consistent explicit test settings."""
 
     options: dict[str, Any] = {
         "ticket_id": "TICKET-001",
@@ -334,7 +406,9 @@ def run_test_agent(
 
     options.update(overrides)
 
-    return agent.run_victim_agent(**options)
+    return agent.run_victim_agent(
+        **options
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -343,19 +417,15 @@ def run_test_agent(
 
 
 def test_arbitrary_model_name_is_accepted() -> None:
-    result = agent._validate_model_name(
+    assert agent._validate_model_name(
         "organization/custom-model:Q4_K_M"
-    )
-
-    assert result == "organization/custom-model:Q4_K_M"
+    ) == "organization/custom-model:Q4_K_M"
 
 
 def test_model_name_is_normalized() -> None:
-    result = agent._validate_model_name(
+    assert agent._validate_model_name(
         "  llama3.1:8b  "
-    )
-
-    assert result == "llama3.1:8b"
+    ) == "llama3.1:8b"
 
 
 @pytest.mark.parametrize(
@@ -370,8 +440,12 @@ def test_model_name_is_normalized() -> None:
 def test_invalid_model_name_is_rejected(
     model: object,
 ) -> None:
-    with pytest.raises(agent.ConfigurationError):
-        agent._validate_model_name(model)
+    with pytest.raises(
+        agent.ConfigurationError
+    ):
+        agent._validate_model_name(
+            model
+        )
 
 
 @pytest.mark.parametrize(
@@ -385,32 +459,37 @@ def test_invalid_model_name_is_rejected(
 def test_supported_structured_modes_are_accepted(
     mode: str,
 ) -> None:
-    assert agent._validate_structured_mode(mode) == mode
+    assert agent._validate_structured_mode(
+        mode
+    ) == mode
 
 
 def test_unknown_structured_mode_is_rejected() -> None:
-    with pytest.raises(agent.ConfigurationError):
+    with pytest.raises(
+        agent.ConfigurationError
+    ):
         agent._validate_structured_mode(
             "native_tool_calling"
         )
 
 
 @pytest.mark.parametrize(
-    "temperature",
+    ("raw_value", "expected"),
     [
-        0,
-        0.5,
-        1,
-        2,
+        (0, 0.0),
+        ("0", 0.0),
+        (0.5, 0.5),
+        ("1.5", 1.5),
+        (2, 2.0),
     ],
 )
-def test_valid_temperatures_are_accepted(
-    temperature: float,
+def test_valid_temperatures_are_parsed(
+    raw_value: object,
+    expected: float,
 ) -> None:
-    assert (
-        agent._validate_temperature(temperature)
-        == float(temperature)
-    )
+    assert agent._validate_temperature(
+        raw_value
+    ) == expected
 
 
 @pytest.mark.parametrize(
@@ -419,43 +498,125 @@ def test_valid_temperatures_are_accepted(
         -0.1,
         2.1,
         True,
-        "0",
+        "invalid",
     ],
 )
 def test_invalid_temperatures_are_rejected(
     temperature: object,
 ) -> None:
-    with pytest.raises(agent.ConfigurationError):
-        agent._validate_temperature(temperature)
+    with pytest.raises(
+        agent.ConfigurationError
+    ):
+        agent._validate_temperature(
+            temperature
+        )
 
 
-def test_allowlisted_ollama_url_is_accepted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv(
-        "OLLAMA_ALLOWED_HOSTS",
-        "localhost,127.0.0.1",
-    )
-
+def test_allowlisted_ollama_url_and_port_are_accepted() -> None:
     result = agent._validate_ollama_base_url(
-        "http://localhost:11434/"
+        "http://localhost:11434/",
+        allowed_hosts={"localhost"},
+        allowed_ports={11434},
     )
 
     assert result == "http://localhost:11434"
 
 
-def test_non_allowlisted_ollama_url_is_rejected(
+def test_non_allowlisted_ollama_host_is_rejected() -> None:
+    with pytest.raises(
+        agent.ConfigurationError,
+        match="hostname is not allowlisted",
+    ):
+        agent._validate_ollama_base_url(
+            "http://attacker.example:11434",
+            allowed_hosts={"localhost"},
+            allowed_ports={11434},
+        )
+
+
+def test_non_allowlisted_ollama_port_is_rejected() -> None:
+    with pytest.raises(
+        agent.ConfigurationError,
+        match="port is not allowlisted",
+    ):
+        agent._validate_ollama_base_url(
+            "http://localhost:8080",
+            allowed_hosts={"localhost"},
+            allowed_ports={11434},
+        )
+
+
+def test_invalid_numeric_environment_is_controlled_at_runtime(
+    isolated_agent_runtime: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
-        "OLLAMA_ALLOWED_HOSTS",
-        "localhost",
+        "VICTIM_NUM_CTX",
+        "8k",
     )
 
-    with pytest.raises(agent.ConfigurationError):
-        agent._validate_ollama_base_url(
-            "http://attacker.example:11434"
+    def model_must_not_be_called(
+        **_: Any,
+    ) -> tuple[str, dict[str, Any]]:
+        pytest.fail(
+            "The model API must not be called for invalid configuration."
         )
+
+    monkeypatch.setattr(
+        agent,
+        "_call_ollama",
+        model_must_not_be_called,
+    )
+
+    result = run_test_agent(
+        num_ctx=None,
+    )
+
+    assert result["status"] == "error"
+    assert result["steps_used"] == 0
+    assert "base-10 integer" in result["reason"]
+    assert (
+        result["execution_configuration"]["configuration_loaded"]
+        is False
+    )
+
+
+def test_invalid_numeric_environment_does_not_break_module_import() -> None:
+    repository_root = Path(
+        __file__
+    ).resolve().parents[1]
+
+    environment = os.environ.copy()
+    environment["VICTIM_NUM_CTX"] = "8k"
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            [
+                str(repository_root),
+                environment.get("PYTHONPATH", ""),
+            ],
+        )
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import victim_agent.agent as module; "
+                "print(module.DEFAULT_NUM_CTX)"
+            ),
+        ],
+        cwd=repository_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "8192"
+    assert completed.stderr == ""
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +642,9 @@ def test_valid_tool_request_decision_is_accepted() -> None:
 def test_valid_completed_decision_is_accepted() -> None:
     decision = agent._parse_model_decision(
         make_completed(
-            final_response="VPN troubleshooting steps were provided."
+            final_response=(
+                "VPN troubleshooting steps were provided."
+            )
         )
     )
 
@@ -493,7 +656,9 @@ def test_valid_completed_decision_is_accepted() -> None:
 
 
 def test_non_json_model_output_is_rejected() -> None:
-    with pytest.raises(agent.ModelResponseError):
+    with pytest.raises(
+        agent.ModelResponseError
+    ):
         agent._parse_model_decision(
             "I would like to read the ticket."
         )
@@ -508,8 +673,12 @@ def test_model_decision_missing_field_is_rejected() -> None:
         }
     )
 
-    with pytest.raises(agent.ModelResponseError):
-        agent._parse_model_decision(raw_output)
+    with pytest.raises(
+        agent.ModelResponseError
+    ):
+        agent._parse_model_decision(
+            raw_output
+        )
 
 
 def test_tool_request_with_final_response_is_rejected() -> None:
@@ -527,27 +696,12 @@ def test_tool_request_with_final_response_is_rejected() -> None:
         }
     )
 
-    with pytest.raises(agent.ModelResponseError):
-        agent._parse_model_decision(raw_output)
-
-
-def test_completed_decision_with_tool_call_is_rejected() -> None:
-    raw_output = json.dumps(
-        {
-            "status": "completed",
-            "reason": "Done.",
-            "tool_call": {
-                "name": "read_ticket",
-                "arguments": {
-                    "ticket_id": "TICKET-001",
-                },
-            },
-            "final_response": "Completed.",
-        }
-    )
-
-    with pytest.raises(agent.ModelResponseError):
-        agent._parse_model_decision(raw_output)
+    with pytest.raises(
+        agent.ModelResponseError
+    ):
+        agent._parse_model_decision(
+            raw_output
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -570,7 +724,9 @@ def test_tool_result_is_marked_as_untrusted_data() -> None:
         },
     )
 
-    envelope = json.loads(message)
+    envelope = json.loads(
+        message
+    )
 
     assert envelope["security_label"] == "UNTRUSTED_DATA"
     assert envelope["tool_name"] == "read_ticket"
@@ -596,18 +752,290 @@ def test_oversized_tool_result_is_replaced_with_error(
         },
     )
 
-    envelope = json.loads(message)
+    envelope = json.loads(
+        message
+    )
 
     assert envelope["result"]["status"] == "error"
     assert "maximum size" in envelope["result"]["error"]
 
 
 # ---------------------------------------------------------------------------
-# Complete Victim Agent workflow
+# Ticket-read state machine
 # ---------------------------------------------------------------------------
 
 
-def test_complete_agent_tool_loop(
+def test_ticket_read_success_allows_completion(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_completed(
+                final_response=(
+                    "The VPN ticket was reviewed successfully."
+                )
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "completed"
+    assert result["steps_used"] == 2
+    assert result["session_state"] == {
+        "ticket_read_attempted": True,
+        "ticket_read_succeeded": True,
+        "ticket_read_failure_reason": None,
+    }
+    assert fake_tools == [
+        {
+            "name": "read_ticket",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+            },
+        }
+    ]
+    assert result["trace"][0]["ticket_read_state"] == {
+        "attempted": True,
+        "succeeded": True,
+        "failure_reason": None,
+    }
+    assert (
+        result["trace"][1]["terminal_policy"]["rule_id"]
+        == "SESSION_COMPLETED_ALLOWED"
+    )
+    assert len(model_calls) == 2
+
+
+def test_missing_ticket_allows_human_review_after_failed_read(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_read_ticket(
+        ticket_id: str,
+    ) -> dict[str, Any]:
+        fake_tools.append(
+            {
+                "name": "read_ticket",
+                "arguments": {
+                    "ticket_id": ticket_id,
+                },
+            }
+        )
+
+        return {
+            "status": "not_found",
+            "operation": "read_ticket",
+            "ticket_id": ticket_id,
+            "data": None,
+            "error": "Ticket was not found.",
+        }
+
+    monkeypatch.setattr(
+        agent,
+        "read_ticket",
+        missing_read_ticket,
+    )
+
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_human_review(
+                reason="The assigned ticket does not exist."
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 2
+    assert result["session_state"] == {
+        "ticket_read_attempted": True,
+        "ticket_read_succeeded": False,
+        "ticket_read_failure_reason": "Ticket was not found.",
+    }
+    assert (
+        result["trace"][1]["terminal_policy"]["rule_id"]
+        == "SESSION_HUMAN_REVIEW_ALLOWED"
+    )
+
+    returned_tool_message = json.loads(
+        model_calls[1]["messages"][-1]["content"]
+    )
+
+    assert returned_tool_message["security_label"] == "UNTRUSTED_DATA"
+    assert returned_tool_message["result"]["status"] == "not_found"
+
+
+def test_malformed_ticket_json_allows_human_review(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def malformed_read_ticket(
+        ticket_id: str,
+    ) -> dict[str, Any]:
+        fake_tools.append(
+            {
+                "name": "read_ticket",
+                "arguments": {
+                    "ticket_id": ticket_id,
+                },
+            }
+        )
+
+        return {
+            "status": "error",
+            "operation": "read_ticket",
+            "ticket_id": ticket_id,
+            "data": None,
+            "error": "Ticket file contains invalid JSON.",
+        }
+
+    monkeypatch.setattr(
+        agent,
+        "read_ticket",
+        malformed_read_ticket,
+    )
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_human_review(
+                reason=(
+                    "The assigned ticket could not be parsed safely."
+                )
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["session_state"]["ticket_read_attempted"] is True
+    assert result["session_state"]["ticket_read_succeeded"] is False
+    assert result["session_state"]["ticket_read_failure_reason"] == (
+        "Ticket file contains invalid JSON."
+    )
+
+
+def test_completed_after_ticket_read_failure_is_blocked_then_review_allowed(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_read_ticket(
+        ticket_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": "error",
+            "operation": "read_ticket",
+            "ticket_id": ticket_id,
+            "data": None,
+            "error": "Ticket could not be read.",
+        }
+
+    monkeypatch.setattr(
+        agent,
+        "read_ticket",
+        failing_read_ticket,
+    )
+
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_completed(
+                final_response="The ticket is complete."
+            ),
+            make_human_review(),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 3
+    assert (
+        result["trace"][1]["terminal_policy"]["rule_id"]
+        == "SESSION_COMPLETED_AFTER_READ_FAILURE"
+    )
+
+    runtime_feedback = json.loads(
+        model_calls[2]["messages"][-1]["content"]
+    )
+
+    assert runtime_feedback["security_label"] == (
+        "TRUSTED_RUNTIME_POLICY"
+    )
+    assert runtime_feedback["required_next_action"] == (
+        "Return needs_human_review or error."
+    )
+
+
+def test_human_review_before_any_read_attempt_is_blocked(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_human_review(),
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_completed(),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "completed"
+    assert result["steps_used"] == 3
+    assert (
+        result["trace"][0]["terminal_policy"]["rule_id"]
+        == "SESSION_HUMAN_REVIEW_BEFORE_READ_ATTEMPT"
+    )
+    assert len(fake_tools) == 1
+
+
+# ---------------------------------------------------------------------------
+# Complete workflow and logging
+# ---------------------------------------------------------------------------
+
+
+def test_complete_agent_tool_loop_and_reproducibility_log(
     isolated_agent_runtime: dict[str, Path],
     fake_tools: list[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
@@ -640,8 +1068,8 @@ def test_complete_agent_tool_loop(
             ),
             make_completed(
                 final_response=(
-                    "The employee should verify their connection "
-                    "and restart the approved VPN client."
+                    "Verify the connection and restart the approved "
+                    "VPN client."
                 )
             ),
         ],
@@ -652,7 +1080,6 @@ def test_complete_agent_tool_loop(
     assert result["status"] == "completed"
     assert result["steps_used"] == 4
     assert result["ticket_id"] == "TICKET-001"
-
     assert result["model_configuration"] == {
         "backend": "ollama",
         "model": "test-model:latest",
@@ -660,6 +1087,19 @@ def test_complete_agent_tool_loop(
         "temperature": 0.0,
         "num_ctx": 8192,
     }
+    assert result["execution_configuration"]["max_steps"] == 8
+    assert result["execution_configuration"]["timeout_seconds"] == 30.0
+    assert result["execution_configuration"]["allowed_ollama_ports"] == [
+        11434
+    ]
+    assert result["execution_configuration"]["blocked_tool_action"] == (
+        "immediate_human_review"
+    )
+    assert result["execution_configuration"]["system_prompt_sha256"]
+    assert result["runtime_metadata"]["ollama_version"] == "0.0.0-test"
+    assert result["runtime_metadata"]["model"]["digest"] == (
+        "sha256:test-model-digest"
+    )
 
     assert [
         call["name"]
@@ -672,20 +1112,11 @@ def test_complete_agent_tool_loop(
 
     assert len(model_calls) == 4
 
-    for model_call in model_calls:
-        assert model_call["model"] == "test-model:latest"
-        assert model_call["structured_mode"] == "schema"
-        assert model_call["temperature"] == 0.0
-        assert model_call["num_ctx"] == 8192
-
-    # The second model request should include the untrusted ticket result.
     second_request_last_message = json.loads(
         model_calls[1]["messages"][-1]["content"]
     )
-
-    assert (
-        second_request_last_message["security_label"]
-        == "UNTRUSTED_DATA"
+    assert second_request_last_message["security_label"] == (
+        "UNTRUSTED_DATA"
     )
 
     assert result["log_filename"] is not None
@@ -697,59 +1128,29 @@ def test_complete_agent_tool_loop(
 
     assert log_path.is_file()
 
-
-def test_policy_normalized_arguments_are_executed(
-    isolated_agent_runtime: dict[str, Path],
-    fake_tools: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    install_model_sequence(
-        monkeypatch,
-        [
-            make_tool_request(
-                "read_ticket",
-                {
-                    "ticket_id": "  TICKET-001  ",
-                },
-            ),
-            make_tool_request(
-                "update_ticket",
-                {
-                    "ticket_id": "  TICKET-001  ",
-                    "status": "  IN_PROGRESS  ",
-                    "note": "  Reviewing the VPN issue.  ",
-                },
-            ),
-            make_completed(),
-        ],
+    saved_log = json.loads(
+        log_path.read_text(
+            encoding="utf-8"
+        )
     )
 
-    result = run_test_agent()
-
-    assert result["status"] == "completed"
-
-    assert fake_tools[0]["arguments"] == {
-        "ticket_id": "TICKET-001",
-    }
-
-    assert fake_tools[1]["arguments"] == {
-        "ticket_id": "TICKET-001",
-        "status": "in_progress",
-        "note": "Reviewing the VPN issue.",
-    }
+    assert saved_log["run_id"] == result["run_id"]
+    assert saved_log["runtime_metadata"]["model"]["digest"] == (
+        "sha256:test-model-digest"
+    )
 
 
 # ---------------------------------------------------------------------------
-# Policy and session restrictions
+# Policy and session-block behavior
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_tool_is_blocked_and_not_executed(
+def test_policy_block_immediately_ends_in_human_review(
     isolated_agent_runtime: dict[str, Path],
     fake_tools: list[dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    install_model_sequence(
+    model_calls = install_model_sequence(
         monkeypatch,
         [
             make_tool_request(
@@ -758,37 +1159,54 @@ def test_unknown_tool_is_blocked_and_not_executed(
                     "command": "cat /etc/passwd",
                 },
             ),
-            make_tool_request(
-                "read_ticket",
-                {
-                    "ticket_id": "TICKET-001",
-                },
-            ),
-            make_completed(),
         ],
     )
 
     result = run_test_agent()
 
-    assert result["status"] == "completed"
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 1
+    assert fake_tools == []
+    assert len(model_calls) == 1
+    assert result["trace"][0]["tool_policy"]["decision"] == "blocked"
+    assert result["trace"][0]["tool_policy"]["rule_id"] == (
+        "TOOL_NOT_ALLOWLISTED"
+    )
+    assert result["trace"][0]["blocked_tool_action"] == (
+        "immediate_human_review"
+    )
+    assert result["trace"][0]["tool_result"]["status"] == "blocked"
 
-    assert [
-        call["name"]
-        for call in fake_tools
-    ] == [
-        "read_ticket",
-    ]
 
-    first_trace = result["trace"][0]
-
-    assert (
-        first_trace["tool_policy"]["decision"]
-        == "blocked"
+def test_session_policy_block_immediately_ends_in_human_review(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "search_knowledge_base",
+                {
+                    "query": "VPN",
+                    "top_k": 3,
+                },
+            ),
+        ],
     )
 
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 1
+    assert fake_tools == []
     assert (
-        first_trace["tool_policy"]["rule_id"]
-        == "TOOL_NOT_ALLOWLISTED"
+        result["trace"][0]["session_policy"]["rule_id"]
+        == "SESSION_TICKET_NOT_READ"
+    )
+    assert result["trace"][0]["blocked_tool_action"] == (
+        "immediate_human_review"
     )
 
 
@@ -806,165 +1224,216 @@ def test_agent_cannot_access_another_ticket(
                     "ticket_id": "TICKET-999",
                 },
             ),
-            make_tool_request(
-                "read_ticket",
-                {
-                    "ticket_id": "TICKET-001",
-                },
-            ),
-            make_completed(),
-        ],
-    )
-
-    result = run_test_agent()
-
-    assert result["status"] == "completed"
-
-    assert fake_tools == [
-        {
-            "name": "read_ticket",
-            "arguments": {
-                "ticket_id": "TICKET-001",
-            },
-        }
-    ]
-
-    first_trace = result["trace"][0]
-
-    assert (
-        first_trace["session_policy"]["decision"]
-        == "blocked"
-    )
-
-    assert (
-        first_trace["session_policy"]["rule_id"]
-        == "SESSION_TICKET_SCOPE_MISMATCH"
-    )
-
-
-def test_agent_cannot_search_before_reading_ticket(
-    isolated_agent_runtime: dict[str, Path],
-    fake_tools: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    install_model_sequence(
-        monkeypatch,
-        [
-            make_tool_request(
-                "search_knowledge_base",
-                {
-                    "query": "VPN",
-                    "top_k": 3,
-                },
-            ),
-            make_tool_request(
-                "read_ticket",
-                {
-                    "ticket_id": "TICKET-001",
-                },
-            ),
-            make_completed(),
-        ],
-    )
-
-    result = run_test_agent()
-
-    assert result["status"] == "completed"
-
-    assert [
-        call["name"]
-        for call in fake_tools
-    ] == [
-        "read_ticket",
-    ]
-
-    first_trace = result["trace"][0]
-
-    assert (
-        first_trace["session_policy"]["rule_id"]
-        == "SESSION_TICKET_NOT_READ"
-    )
-
-
-def test_agent_cannot_finish_before_reading_ticket(
-    isolated_agent_runtime: dict[str, Path],
-    fake_tools: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    install_model_sequence(
-        monkeypatch,
-        [
-            make_completed(
-                final_response="The issue is fixed."
-            ),
-            make_tool_request(
-                "read_ticket",
-                {
-                    "ticket_id": "TICKET-001",
-                },
-            ),
-            make_completed(
-                final_response="The ticket has now been reviewed."
-            ),
-        ],
-    )
-
-    result = run_test_agent()
-
-    assert result["status"] == "completed"
-    assert result["steps_used"] == 3
-
-    assert (
-        result["trace"][0]["terminal_policy"]["rule_id"]
-        == "SESSION_TERMINAL_BEFORE_READ"
-    )
-
-    assert [
-        call["name"]
-        for call in fake_tools
-    ] == [
-        "read_ticket",
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Loop protection and failure handling
-# ---------------------------------------------------------------------------
-
-
-def test_repeated_identical_tool_call_triggers_loop_guard(
-    isolated_agent_runtime: dict[str, Path],
-    fake_tools: list[dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repeated_call = make_tool_request(
-        "read_ticket",
-        {
-            "ticket_id": "TICKET-001",
-        },
-    )
-
-    install_model_sequence(
-        monkeypatch,
-        [
-            repeated_call,
-            repeated_call,
-            repeated_call,
         ],
     )
 
     result = run_test_agent()
 
     assert result["status"] == "needs_human_review"
-    assert result["steps_used"] == 3
-
-    # The third repeated request is stopped before execution.
-    assert len(fake_tools) == 2
-
+    assert fake_tools == []
     assert (
-        result["trace"][-1]["event"]
-        == "loop_guard_triggered"
+        result["trace"][0]["session_policy"]["rule_id"]
+        == "SESSION_TICKET_SCOPE_MISMATCH"
     )
+
+
+# ---------------------------------------------------------------------------
+# Normalized loop guard
+# ---------------------------------------------------------------------------
+
+
+def test_loop_guard_uses_policy_normalized_tool_calls(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                " read_ticket ",
+                {
+                    "ticket_id": " TICKET-001 ",
+                },
+            ),
+            make_tool_request(
+                " update_ticket ",
+                {
+                    "ticket_id": " TICKET-001 ",
+                    "status": " IN_PROGRESS ",
+                    "note": " Reviewing the VPN issue. ",
+                },
+            ),
+            make_tool_request(
+                "update_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                    "status": "in_progress",
+                    "note": "Reviewing the VPN issue.",
+                },
+            ),
+            make_tool_request(
+                " update_ticket",
+                {
+                    "ticket_id": "TICKET-001 ",
+                    "status": "In_Progress ",
+                    "note": "  Reviewing the VPN issue.  ",
+                },
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 4
+    assert result["trace"][-1]["event"] == "loop_guard_triggered"
+    assert result["trace"][-1]["normalized_tool_call_count"] == 3
+    assert result["trace"][-1]["normalized_tool_call"] == {
+        "name": "update_ticket",
+        "arguments": {
+            "ticket_id": "TICKET-001",
+            "status": "in_progress",
+            "note": "Reviewing the VPN issue.",
+        },
+    }
+
+    # The third equivalent update is stopped before execution.
+    assert [
+        call["name"]
+        for call in fake_tools
+    ] == [
+        "read_ticket",
+        "update_ticket",
+        "update_ticket",
+    ]
+
+
+def test_tool_call_fingerprint_is_stable_for_normalized_data() -> None:
+    first = agent._tool_call_fingerprint(
+        tool_name="update_ticket",
+        arguments={
+            "ticket_id": "TICKET-001",
+            "status": "in_progress",
+            "note": "Reviewing the VPN issue.",
+        },
+    )
+
+    second = agent._tool_call_fingerprint(
+        tool_name="update_ticket",
+        arguments={
+            "note": "Reviewing the VPN issue.",
+            "status": "in_progress",
+            "ticket_id": "TICKET-001",
+        },
+    )
+
+    assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Tool-exception containment
+# ---------------------------------------------------------------------------
+
+
+def test_unexpected_tool_exception_becomes_structured_error(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sensitive_exception_text = "sensitive internal filesystem failure"
+
+    def exploding_read_ticket(
+        ticket_id: str,
+    ) -> dict[str, Any]:
+        raise RuntimeError(
+            sensitive_exception_text
+        )
+
+    monkeypatch.setattr(
+        agent,
+        "read_ticket",
+        exploding_read_ticket,
+    )
+
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_human_review(
+                reason="The ticket tool failed safely."
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["session_state"] == {
+        "ticket_read_attempted": True,
+        "ticket_read_succeeded": False,
+        "ticket_read_failure_reason": (
+            "The approved tool could not be executed safely."
+        ),
+    }
+
+    first_trace = result["trace"][0]
+    assert first_trace["tool_result"] == {
+        "status": "error",
+        "operation": "read_ticket",
+        "data": None,
+        "error": "The approved tool could not be executed safely.",
+    }
+    assert first_trace["tool_execution_error"]["exception_type"] == (
+        "RuntimeError"
+    )
+    assert sensitive_exception_text in (
+        first_trace["tool_execution_error"]["exception_message"]
+    )
+
+    model_visible_message = model_calls[1]["messages"][-1]["content"]
+    assert sensitive_exception_text not in model_visible_message
+    assert "could not be executed safely" in model_visible_message
+
+
+def test_non_object_tool_result_is_contained(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agent,
+        "read_ticket",
+        lambda ticket_id: "not-a-dictionary",
+    )
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_human_review(),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["trace"][0]["tool_execution_error"]["exception_type"] == (
+        "ToolExecutionError"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Loop protection and controlled failures
+# ---------------------------------------------------------------------------
 
 
 def test_maximum_steps_triggers_human_review(
@@ -997,11 +1466,7 @@ def test_maximum_steps_triggers_human_review(
 
     assert result["status"] == "needs_human_review"
     assert result["steps_used"] == 2
-
-    assert (
-        result["trace"][-1]["event"]
-        == "maximum_steps_reached"
-    )
+    assert result["trace"][-1]["event"] == "maximum_steps_reached"
 
 
 def test_invalid_model_json_returns_controlled_error(
@@ -1021,11 +1486,7 @@ def test_invalid_model_json_returns_controlled_error(
     assert result["status"] == "error"
     assert result["steps_used"] == 1
     assert fake_tools == []
-
-    assert (
-        result["trace"][0]["event"]
-        == "invalid_model_output"
-    )
+    assert result["trace"][0]["event"] == "invalid_model_output"
 
 
 def test_model_connection_failure_returns_controlled_error(
@@ -1051,11 +1512,8 @@ def test_model_connection_failure_returns_controlled_error(
     assert result["status"] == "error"
     assert result["steps_used"] == 1
     assert fake_tools == []
-
-    assert (
-        result["trace"][0]["event"]
-        == "model_connection_error"
-    )
+    assert result["trace"][0]["event"] == "model_request_error"
+    assert result["trace"][0]["error_type"] == "ModelConnectionError"
 
 
 def test_missing_model_configuration_returns_error(
@@ -1111,6 +1569,168 @@ def test_invalid_initial_ticket_id_returns_error(
 
 
 # ---------------------------------------------------------------------------
+# Secure Ollama HTTP behavior
+# ---------------------------------------------------------------------------
+
+
+def test_secure_opener_disables_environment_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_handlers: tuple[Any, ...] = ()
+    sentinel = object()
+
+    def fake_build_opener(
+        *handlers: Any,
+    ) -> object:
+        nonlocal captured_handlers
+        captured_handlers = handlers
+        return sentinel
+
+    monkeypatch.setattr(
+        agent.urllib.request,
+        "build_opener",
+        fake_build_opener,
+    )
+
+    result = agent._build_secure_opener()
+
+    assert result is sentinel
+
+    proxy_handlers = [
+        handler
+        for handler in captured_handlers
+        if isinstance(
+            handler,
+            urllib.request.ProxyHandler,
+        )
+    ]
+
+    redirect_handlers = [
+        handler
+        for handler in captured_handlers
+        if isinstance(
+            handler,
+            agent._RejectRedirectHandler,
+        )
+    ]
+
+    assert len(proxy_handlers) == 1
+    assert proxy_handlers[0].proxies == {}
+    assert len(redirect_handlers) == 1
+
+
+def test_redirect_handler_refuses_redirect_request() -> None:
+    handler = agent._RejectRedirectHandler()
+
+    redirected_request = handler.redirect_request(
+        urllib.request.Request(
+            "http://localhost:11434/api/chat"
+        ),
+        None,
+        302,
+        "Found",
+        {},
+        "http://attacker.example/redirected",
+    )
+
+    assert redirected_request is None
+
+
+def test_ollama_http_redirect_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = "http://localhost:11434/api/chat"
+
+    class RedirectingOpener:
+        def open(
+            self,
+            request: urllib.request.Request,
+            timeout: float,
+        ) -> Any:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                302,
+                "Found",
+                {
+                    "Location": (
+                        "http://attacker.example:11434/api/chat"
+                    )
+                },
+                io.BytesIO(b""),
+            )
+
+    monkeypatch.setattr(
+        agent,
+        "_build_secure_opener",
+        lambda: RedirectingOpener(),
+    )
+
+    with pytest.raises(
+        agent.ModelConnectionError,
+        match="redirects are not permitted",
+    ):
+        agent._request_ollama_json(
+            endpoint=endpoint,
+            method="POST",
+            timeout_seconds=5,
+            body={
+                "model": "test-model:latest",
+            },
+        )
+
+
+def test_unexpected_final_response_url_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = "http://localhost:11434/api/version"
+
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> bool:
+            return False
+
+        def geturl(self) -> str:
+            return "http://attacker.example:11434/api/version"
+
+        def read(
+            self,
+            _: int,
+        ) -> bytes:
+            return b'{"version":"test"}'
+
+    class FakeOpener:
+        def open(
+            self,
+            request: urllib.request.Request,
+            timeout: float,
+        ) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        agent,
+        "_build_secure_opener",
+        lambda: FakeOpener(),
+    )
+
+    with pytest.raises(
+        agent.ModelConnectionError,
+        match="unexpected URL",
+    ):
+        agent._request_ollama_json(
+            endpoint=endpoint,
+            method="GET",
+            timeout_seconds=5,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Ollama request construction
 # ---------------------------------------------------------------------------
 
@@ -1129,53 +1749,49 @@ def test_ollama_request_uses_selected_output_mode(
     expected_format: str | None,
 ) -> None:
     captured_request: dict[str, Any] = {}
-
     model_decision = make_completed(
         final_response="Test response."
     )
 
-    class FakeHTTPResponse:
-        """Minimal context-managed HTTP response."""
+    def fake_request_ollama_json(
+        *,
+        endpoint: str,
+        method: str,
+        timeout_seconds: float,
+        body: dict[str, Any] | None = None,
+        max_response_bytes: int,
+    ) -> dict[str, Any]:
+        captured_request.update(
+            {
+                "endpoint": endpoint,
+                "method": method,
+                "timeout_seconds": timeout_seconds,
+                "body": body,
+                "max_response_bytes": max_response_bytes,
+            }
+        )
 
-        def __enter__(self) -> "FakeHTTPResponse":
-            return self
-
-        def __exit__(
-            self,
-            exc_type: object,
-            exc_value: object,
-            traceback: object,
-        ) -> bool:
-            return False
-
-        def read(
-            self,
-            _: int,
-        ) -> bytes:
-            return json.dumps(
-                {
-                    "model": "custom-model:latest",
-                    "done": True,
-                    "message": {
-                        "role": "assistant",
-                        "content": model_decision,
-                    },
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(
-        request: Any,
-        timeout: float,
-    ) -> FakeHTTPResponse:
-        captured_request["request"] = request
-        captured_request["timeout"] = timeout
-
-        return FakeHTTPResponse()
+        return {
+            "model": "custom-model:latest",
+            "done": True,
+            "message": {
+                "role": "assistant",
+                "content": model_decision,
+            },
+        }
 
     monkeypatch.setattr(
-        agent.urllib.request,
-        "urlopen",
-        fake_urlopen,
+        agent,
+        "_request_ollama_json",
+        fake_request_ollama_json,
+    )
+
+    monkeypatch.setattr(
+        agent,
+        "_collect_ollama_runtime_metadata",
+        lambda **_: sample_runtime_metadata(
+            "custom-model:latest"
+        ),
     )
 
     content, metrics = agent._call_ollama(
@@ -1197,22 +1813,19 @@ def test_ollama_request_uses_selected_output_mode(
         timeout_seconds=30,
     )
 
-    request = captured_request["request"]
+    request_body = captured_request["body"]
 
-    request_body = json.loads(
-        request.data.decode("utf-8")
+    assert captured_request["endpoint"] == (
+        "http://localhost:11434/api/chat"
     )
-
+    assert captured_request["method"] == "POST"
     assert request_body["model"] == "custom-model:latest"
     assert request_body["stream"] is False
     assert request_body["options"]["temperature"] == 0
     assert request_body["options"]["num_ctx"] == 8192
 
     if expected_format == "schema":
-        assert (
-            request_body["format"]
-            == agent.MODEL_RESPONSE_SCHEMA
-        )
+        assert request_body["format"] == agent.MODEL_RESPONSE_SCHEMA
 
     elif expected_format == "json":
         assert request_body["format"] == "json"
@@ -1222,3 +1835,6 @@ def test_ollama_request_uses_selected_output_mode(
 
     assert content == model_decision
     assert metrics["model"] == "custom-model:latest"
+    assert metrics["runtime_metadata"]["model"]["digest"] == (
+        "sha256:test-model-digest"
+    )
