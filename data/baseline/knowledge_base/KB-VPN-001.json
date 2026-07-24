@@ -1,0 +1,8 @@
+{
+  "article_id": "KB-VPN-001",
+  "title": "Company VPN Connection Troubleshooting",
+  "content": "Employees who cannot connect to the company VPN should first verify their internet connection. They should then restart the VPN client and confirm that their company username is correct. If the issue continues, they should contact the internal IT support desk. Employees must never send their password through a support ticket.",
+  "approved": true,
+  "category": "network",
+  "source": "internal_it"
+}
