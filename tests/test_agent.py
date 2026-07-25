@@ -795,6 +795,8 @@ def test_ticket_read_success_allows_completion(
         "ticket_read_attempted": True,
         "ticket_read_succeeded": True,
         "ticket_read_failure_reason": None,
+        "last_tool_name": None,
+        "last_tool_status": None,
     }
     assert fake_tools == [
         {
@@ -870,6 +872,8 @@ def test_missing_ticket_allows_human_review_after_failed_read(
         "ticket_read_attempted": True,
         "ticket_read_succeeded": False,
         "ticket_read_failure_reason": "Ticket was not found.",
+        "last_tool_name": None,
+        "last_tool_status": None,
     }
     assert (
         result["trace"][1]["terminal_policy"]["rule_id"]
@@ -1015,6 +1019,8 @@ def test_oversized_read_result_does_not_mark_ticket_as_successful(
             "Tool result exceeded the maximum size "
             "allowed for model context."
         ),
+        "last_tool_name": None,
+        "last_tool_status": None,
     }
 
     # The trusted trace preserves what the underlying tool actually returned.
@@ -1141,6 +1147,348 @@ def test_completed_after_ticket_read_failure_is_blocked_then_review_allowed(
     )
     assert runtime_feedback["required_next_action"] == (
         "Return needs_human_review or error."
+    )
+
+
+def _succeeding_read_ticket(ticket_id: str) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "operation": "read_ticket",
+        "ticket_id": ticket_id,
+        "data": {
+            "ticket": {
+                "ticket_id": ticket_id,
+                "subject": "Unable to connect to company VPN",
+                "description": "I cannot connect to the company VPN.",
+                "status": "open",
+                "notes": [],
+            }
+        },
+        "error": None,
+    }
+
+
+def test_completed_blocked_after_unresolved_search_failure(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ticket read succeeding is not enough: completed must also check
+    the most recent search_knowledge_base/update_ticket outcome."""
+
+    def failing_search_knowledge_base(
+        query: str,
+        top_k: int,
+    ) -> dict[str, Any]:
+        return {
+            "status": "error",
+            "operation": "search_knowledge_base",
+            "query": query,
+            "top_k": top_k,
+            "results": None,
+            "result_count": 0,
+            "warnings": [],
+            "error": "Knowledge-base directory is unavailable.",
+        }
+
+    monkeypatch.setattr(
+        agent, "read_ticket", _succeeding_read_ticket
+    )
+    monkeypatch.setattr(
+        agent,
+        "search_knowledge_base",
+        failing_search_knowledge_base,
+    )
+
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_tool_request(
+                "search_knowledge_base",
+                {
+                    "query": "VPN connection troubleshooting",
+                    "top_k": 3,
+                },
+            ),
+            make_completed(
+                final_response="The ticket was resolved."
+            ),
+            make_human_review(),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 4
+    assert result["session_state"]["last_tool_name"] == (
+        "search_knowledge_base"
+    )
+    assert result["session_state"]["last_tool_status"] == "error"
+    assert (
+        result["trace"][2]["terminal_policy"]["rule_id"]
+        == "SESSION_COMPLETED_WITH_UNRESOLVED_TOOL_FAILURE"
+    )
+
+    runtime_feedback = json.loads(
+        model_calls[3]["messages"][-1]["content"]
+    )
+
+    assert runtime_feedback["security_label"] == (
+        "TRUSTED_RUNTIME_POLICY"
+    )
+    assert runtime_feedback["required_next_action"] == (
+        "Return needs_human_review or error."
+    )
+
+
+def test_completed_blocked_after_unresolved_update_failure(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_update_ticket(
+        ticket_id: str,
+        status: str,
+        note: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": "error",
+            "operation": "update_ticket",
+            "ticket_id": ticket_id,
+            "data": None,
+            "error": "Ticket data is corrupted.",
+        }
+
+    monkeypatch.setattr(
+        agent, "read_ticket", _succeeding_read_ticket
+    )
+    monkeypatch.setattr(
+        agent,
+        "update_ticket",
+        failing_update_ticket,
+    )
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_tool_request(
+                "update_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                    "status": "resolved",
+                    "note": "Resolved the VPN issue.",
+                },
+            ),
+            make_completed(
+                final_response="The ticket was resolved."
+            ),
+            make_human_review(),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["session_state"]["last_tool_name"] == (
+        "update_ticket"
+    )
+    assert result["session_state"]["last_tool_status"] == "error"
+    assert (
+        result["trace"][2]["terminal_policy"]["rule_id"]
+        == "SESSION_COMPLETED_WITH_UNRESOLVED_TOOL_FAILURE"
+    )
+
+
+def test_completed_allowed_after_later_tool_call_succeeds(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An earlier KB failure does not permanently block completion: only
+    the most recent search/update outcome is checked, so a later
+    successful update_ticket clears it."""
+
+    def failing_search_knowledge_base(
+        query: str,
+        top_k: int,
+    ) -> dict[str, Any]:
+        return {
+            "status": "error",
+            "operation": "search_knowledge_base",
+            "query": query,
+            "top_k": top_k,
+            "results": None,
+            "result_count": 0,
+            "warnings": [],
+            "error": "Knowledge-base directory is unavailable.",
+        }
+
+    def succeeding_update_ticket(
+        ticket_id: str,
+        status: str,
+        note: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "operation": "update_ticket",
+            "ticket_id": ticket_id,
+            "data": {
+                "new_status": status,
+                "note_added": True,
+            },
+            "error": None,
+        }
+
+    monkeypatch.setattr(
+        agent, "read_ticket", _succeeding_read_ticket
+    )
+    monkeypatch.setattr(
+        agent,
+        "search_knowledge_base",
+        failing_search_knowledge_base,
+    )
+    monkeypatch.setattr(
+        agent,
+        "update_ticket",
+        succeeding_update_ticket,
+    )
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_tool_request(
+                "search_knowledge_base",
+                {
+                    "query": "VPN connection troubleshooting",
+                    "top_k": 3,
+                },
+            ),
+            make_tool_request(
+                "update_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                    "status": "resolved",
+                    "note": "Resolved without KB assistance.",
+                },
+            ),
+            make_completed(
+                final_response="The ticket was resolved."
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "completed"
+    assert result["session_state"]["last_tool_name"] == (
+        "update_ticket"
+    )
+    assert result["session_state"]["last_tool_status"] == "success"
+
+
+def test_error_before_read_attempt_is_blocked_then_retry_allowed(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model cannot end the run as 'error' before ever attempting to
+    read the assigned ticket. This closes the gap where a model (or a
+    prompt-injection attempt) could otherwise stop automated processing
+    on the very first step with no tool interaction at all."""
+
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_error(
+                reason="Cannot process this request."
+            ),
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_error(
+                reason="The ticket cannot be processed safely."
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "error"
+    assert result["steps_used"] == 3
+    assert (
+        result["trace"][0]["terminal_policy"]["rule_id"]
+        == "SESSION_ERROR_BEFORE_READ_ATTEMPT"
+    )
+    assert (
+        result["trace"][2]["terminal_policy"]["rule_id"]
+        == "SESSION_ERROR_ALLOWED"
+    )
+
+    # The model was not allowed to skip straight to read_ticket without
+    # feedback: the runtime told it exactly what was required.
+    runtime_feedback = json.loads(
+        model_calls[1]["messages"][-1]["content"]
+    )
+
+    assert runtime_feedback["security_label"] == (
+        "TRUSTED_RUNTIME_POLICY"
+    )
+    assert runtime_feedback["rule_id"] == (
+        "SESSION_ERROR_BEFORE_READ_ATTEMPT"
+    )
+    assert runtime_feedback["required_next_action"] == (
+        "Request read_ticket for the assigned ticket."
+    )
+
+    # The blocked first attempt never reached tool execution.
+    assert fake_tools == [
+        {
+            "name": "read_ticket",
+            "arguments": {"ticket_id": "TICKET-001"},
+        }
+    ]
+
+
+def test_error_after_read_attempt_is_accepted(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once a read attempt has been made (successful or not), a model may
+    still legitimately end the run as 'error' for a genuinely unrecoverable
+    situation."""
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_error(
+                reason="The ticket content cannot be processed safely."
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "error"
+    assert result["steps_used"] == 2
+    assert (
+        result["trace"][1]["terminal_policy"]["rule_id"]
+        == "SESSION_ERROR_ALLOWED"
     )
 
 
@@ -1409,14 +1757,6 @@ def test_loop_guard_uses_policy_normalized_tool_calls(
                 },
             ),
             make_tool_request(
-                "update_ticket",
-                {
-                    "ticket_id": "TICKET-001",
-                    "status": "in_progress",
-                    "note": "Reviewing the VPN issue.",
-                },
-            ),
-            make_tool_request(
                 " update_ticket",
                 {
                     "ticket_id": "TICKET-001 ",
@@ -1430,9 +1770,9 @@ def test_loop_guard_uses_policy_normalized_tool_calls(
     result = run_test_agent()
 
     assert result["status"] == "needs_human_review"
-    assert result["steps_used"] == 4
+    assert result["steps_used"] == 3
     assert result["trace"][-1]["event"] == "loop_guard_triggered"
-    assert result["trace"][-1]["normalized_tool_call_count"] == 3
+    assert result["trace"][-1]["normalized_tool_call_count"] == 2
     assert result["trace"][-1]["normalized_tool_call"] == {
         "name": "update_ticket",
         "arguments": {
@@ -1442,14 +1782,75 @@ def test_loop_guard_uses_policy_normalized_tool_calls(
         },
     }
 
-    # The third equivalent update is stopped before execution.
+    # update_ticket is a write tool: the second equivalent update is
+    # stopped before execution, not the third.
     assert [
         call["name"]
         for call in fake_tools
     ] == [
         "read_ticket",
         "update_ticket",
-        "update_ticket",
+    ]
+
+
+def test_loop_guard_allows_two_identical_read_only_calls(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read/query tools keep the more lenient MAX_IDENTICAL_TOOL_CALLS
+    threshold: unlike update_ticket, two identical searches may both
+    execute before the third is stopped."""
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_tool_request(
+                "search_knowledge_base",
+                {
+                    "query": "VPN connection troubleshooting",
+                    "top_k": 3,
+                },
+            ),
+            make_tool_request(
+                "search_knowledge_base",
+                {
+                    "query": "VPN connection troubleshooting",
+                    "top_k": 3,
+                },
+            ),
+            make_tool_request(
+                "search_knowledge_base",
+                {
+                    "query": "VPN connection troubleshooting",
+                    "top_k": 3,
+                },
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 4
+    assert result["trace"][-1]["event"] == "loop_guard_triggered"
+    assert result["trace"][-1]["normalized_tool_call_count"] == 3
+
+    # The first two identical searches both execute; only the third is
+    # stopped before execution.
+    assert [
+        call["name"]
+        for call in fake_tools
+    ] == [
+        "read_ticket",
+        "search_knowledge_base",
+        "search_knowledge_base",
     ]
 
 
@@ -1523,6 +1924,8 @@ def test_unexpected_tool_exception_becomes_structured_error(
         "ticket_read_failure_reason": (
             "The approved tool could not be executed safely."
         ),
+        "last_tool_name": None,
+        "last_tool_status": None,
     }
 
     first_trace = result["trace"][0]
