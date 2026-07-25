@@ -780,6 +780,13 @@ def _prepare_knowledge_base_root() -> Path:
     """
     Resolve and validate the runtime knowledge-base directory.
 
+    The directory must already exist; it is never created here. Runtime
+    environment setup (for example a controller reset step) is responsible
+    for populating data/runtime/knowledge_base before the Victim Agent
+    runs. Silently creating an empty knowledge base here would make a
+    missing or misconfigured environment indistinguishable from a search
+    that legitimately matched nothing (status="no_results").
+
     Any failure is converted to KnowledgeBaseToolError so callers can return
     a structured response.
     """
@@ -795,14 +802,9 @@ def _prepare_knowledge_base_root() -> Path:
             )
         )
 
-        knowledge_base_root.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
         if not knowledge_base_root.is_dir():
             raise KnowledgeBaseToolError(
-                "Knowledge-base path is not a directory."
+                "Knowledge-base directory does not exist."
             )
 
         return knowledge_base_root

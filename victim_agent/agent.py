@@ -30,6 +30,13 @@ Security properties implemented here:
 14. An error decision is rejected unless a ticket-read attempt was already
     made, so a model cannot end automated processing before any tool
     interaction at all.
+15. The accumulated conversation is checked against an estimated safe
+    context budget before every model call, so a run whose true failure
+    mode is Ollama silently dropping the system prompt cannot be mistaken
+    for one where the model genuinely disregarded its instructions.
+16. Run logs default to the complete trace, but can be switched to a mode
+    that replaces free-text ticket/knowledge-base content with a digest on
+    disk, without affecting the in-memory result returned to the caller.
 """
 
 from __future__ import annotations
@@ -110,6 +117,34 @@ SUPPORTED_STRUCTURED_MODES = {
     "prompt",
 }
 
+# "full" (default) preserves the existing behavior: the on-disk run log
+# contains the complete trace, including raw ticket and knowledge-base
+# content. "redacted" keeps the returned in-memory result full (so an
+# experiment harness running in the same process can still analyze
+# everything), but writes a copy to disk with free-text ticket/article
+# fields replaced by a non-reversible digest. The default stays "full" so
+# existing behavior and tests are unchanged unless a caller opts in.
+SUPPORTED_LOG_MODES = {
+    "full",
+    "redacted",
+}
+
+DEFAULT_LOG_MODE = "full"
+
+# Field names treated as potentially sensitive free text when log_mode is
+# "redacted". Not exhaustive for arbitrary future tools, but covers every
+# free-text field the current read_ticket/search_knowledge_base/
+# update_ticket tools and their arguments can contain.
+REDACTED_LOG_FIELD_NAMES = {
+    "subject",
+    "description",
+    "note",
+    "title",
+    "content",
+    "snippet",
+    "query",
+}
+
 ALLOWED_MODEL_STATUSES = {
     "tool_request",
     "completed",
@@ -124,6 +159,21 @@ MAX_HTTP_ERROR_CHARACTERS = 2_000
 
 MAX_TOOL_RESULT_CHARACTERS = 50_000
 MAX_TOOL_CALL_CHARACTERS = 10_000
+
+# Ollama's /api/chat endpoint does not raise an error when the accumulated
+# conversation exceeds num_ctx: it silently drops the oldest messages
+# instead, which in this project's message layout means the system prompt
+# (sent first) is normally the first thing to be silently discarded. A
+# per-message size limit (MAX_TOOL_RESULT_CHARACTERS) alone cannot prevent
+# this, since messages keep accumulating across steps. This project has no
+# tokenizer dependency (see requirements.txt), so a deliberately
+# conservative characters-per-token estimate is used in place of a real
+# token count.
+ESTIMATED_CHARACTERS_PER_TOKEN = 3
+
+# Reserve part of num_ctx for the model's own output tokens; only the rest
+# is treated as the safe budget for accumulated input messages.
+CONTEXT_INPUT_BUDGET_RATIO = 0.75
 
 MAX_REASON_LENGTH = 1_000
 MAX_FINAL_RESPONSE_LENGTH = 5_000
@@ -301,6 +351,7 @@ class VictimAgentConfig:
     max_steps: int
     timeout_seconds: float
     log_dir: Path
+    log_mode: str
 
 
 @dataclass
@@ -677,6 +728,26 @@ def _validate_structured_mode(
     return normalized
 
 
+def _validate_log_mode(
+    log_mode: Any,
+) -> str:
+    """Validate the run-log content mode."""
+
+    if not isinstance(log_mode, str):
+        raise ConfigurationError(
+            "Log mode must be a string."
+        )
+
+    normalized = log_mode.strip().lower()
+
+    if normalized not in SUPPORTED_LOG_MODES:
+        raise ConfigurationError(
+            "Log mode must be one of: full, redacted."
+        )
+
+    return normalized
+
+
 def _validate_temperature(
     temperature: Any,
 ) -> float:
@@ -890,6 +961,7 @@ def load_config(
     max_steps: Any = None,
     timeout_seconds: Any = None,
     log_dir: Any = None,
+    log_mode: Any = None,
 ) -> VictimAgentConfig:
     """
     Load and validate all runtime configuration in one controlled location.
@@ -973,6 +1045,14 @@ def load_config(
         )
     )
 
+    selected_log_mode = _validate_log_mode(
+        _select_value(
+            log_mode,
+            "VICTIM_LOG_MODE",
+            DEFAULT_LOG_MODE,
+        )
+    )
+
     return VictimAgentConfig(
         model=selected_model,
         ollama_base_url=selected_base_url,
@@ -984,6 +1064,7 @@ def load_config(
         max_steps=selected_max_steps,
         timeout_seconds=selected_timeout,
         log_dir=selected_log_dir,
+        log_mode=selected_log_mode,
     )
 
 
@@ -2074,6 +2155,106 @@ def _create_tool_result_message(
     )
 
 
+def _estimated_context_budget_exceeded(
+    *,
+    messages: list[dict[str, str]],
+    num_ctx: int,
+) -> bool:
+    """
+    Conservatively estimate whether the accumulated conversation risks
+    exceeding the model's context window.
+
+    This is a deliberately rough, model-agnostic estimate (see
+    ESTIMATED_CHARACTERS_PER_TOKEN). It exists to fail closed *before*
+    calling Ollama, because Ollama itself gives no signal when it silently
+    drops the oldest messages to make room, and by this project's message
+    ordering the system prompt is normally what gets dropped first. Without
+    this check, a run whose true failure mode is "the model never actually
+    saw its own instructions" could be indistinguishable from a run where
+    the model genuinely disregarded them.
+    """
+
+    total_characters = sum(
+        len(message.get("content", ""))
+        for message in messages
+    )
+
+    safe_character_budget = int(
+        num_ctx
+        * CONTEXT_INPUT_BUDGET_RATIO
+        * ESTIMATED_CHARACTERS_PER_TOKEN
+    )
+
+    return total_characters > safe_character_budget
+
+
+def _redact_sensitive_value(
+    value: str,
+) -> dict[str, Any]:
+    """Replace one free-text value with a non-reversible digest."""
+
+    return {
+        "redacted": True,
+        "character_count": len(value),
+        "sha256": hashlib.sha256(
+            value.encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def _redact_sensitive_content(value: Any) -> Any:
+    """
+    Recursively replace free-text values stored under a known sensitive
+    field name (REDACTED_LOG_FIELD_NAMES) with a non-reversible digest.
+
+    Used only to build the on-disk copy of a run result when
+    VictimAgentConfig.log_mode == "redacted". The in-memory result returned
+    to the caller is never modified by this function, so an experiment
+    harness running in the same process can still analyze the full trace;
+    only the persisted log file is affected.
+    """
+
+    if isinstance(value, dict):
+        redacted_dict: dict[str, Any] = {}
+
+        for key, nested_value in value.items():
+            if (
+                key in REDACTED_LOG_FIELD_NAMES
+                and isinstance(nested_value, str)
+                and nested_value
+            ):
+                redacted_dict[key] = _redact_sensitive_value(
+                    nested_value
+                )
+            else:
+                redacted_dict[key] = _redact_sensitive_content(
+                    nested_value
+                )
+
+        return redacted_dict
+
+    if isinstance(value, list):
+        return [
+            _redact_sensitive_content(item)
+            for item in value
+        ]
+
+    return value
+
+
+def _redact_result_for_log(
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a copy of a run result with sensitive trace content redacted."""
+
+    redacted_result = dict(result)
+    redacted_result["trace"] = _redact_sensitive_content(
+        result.get("trace")
+    )
+
+    return redacted_result
+
+
 def _create_runtime_feedback_message(
     *,
     rule_id: str,
@@ -2139,10 +2320,22 @@ def _write_run_log(
     result: dict[str, Any],
     *,
     log_dir: Path,
+    log_mode: str = DEFAULT_LOG_MODE,
 ) -> tuple[str | None, str | None]:
-    """Write the complete run trace atomically."""
+    """Write the complete run trace atomically.
+
+    When log_mode == "redacted", the file written to disk has sensitive
+    free-text trace fields replaced with a non-reversible digest (see
+    _redact_result_for_log). The result argument itself is never mutated.
+    """
 
     temporary_path: Path | None = None
+
+    result_to_persist = (
+        _redact_result_for_log(result)
+        if log_mode == "redacted"
+        else result
+    )
 
     try:
         log_dir.mkdir(
@@ -2159,7 +2352,7 @@ def _write_run_log(
 
         temporary_path.write_text(
             _safe_json_dumps(
-                result,
+                result_to_persist,
                 pretty=True,
             )
             + "\n",
@@ -2224,6 +2417,7 @@ def _configuration_for_log(
         "max_steps": config.max_steps,
         "timeout_seconds": config.timeout_seconds,
         "log_dir": str(config.log_dir),
+        "log_mode": config.log_mode,
         "max_identical_tool_calls": MAX_IDENTICAL_TOOL_CALLS,
         "max_identical_write_tool_calls": (
             MAX_IDENTICAL_WRITE_TOOL_CALLS
@@ -2324,9 +2518,16 @@ def _build_run_result(
         )
     )
 
+    selected_log_mode = (
+        config.log_mode
+        if config is not None
+        else DEFAULT_LOG_MODE
+    )
+
     log_filename, logging_error = _write_run_log(
         result,
         log_dir=log_directory,
+        log_mode=selected_log_mode,
     )
 
     result["log_filename"] = log_filename
@@ -2351,6 +2552,7 @@ def run_victim_agent(
     max_steps: Any = None,
     timeout_seconds: Any = None,
     log_dir: Any = None,
+    log_mode: Any = None,
 ) -> dict[str, Any]:
     """Process one IT support ticket with a selected Ollama model."""
 
@@ -2408,6 +2610,7 @@ def run_victim_agent(
             max_steps=max_steps,
             timeout_seconds=timeout_seconds,
             log_dir=log_dir,
+            log_mode=log_mode,
         )
 
         system_prompt = _read_system_prompt()
@@ -2487,6 +2690,33 @@ def run_victim_agent(
         1,
         config.max_steps + 1,
     ):
+        if _estimated_context_budget_exceeded(
+            messages=messages,
+            num_ctx=config.num_ctx,
+        ):
+            trace.append(
+                {
+                    "step": step_number,
+                    "timestamp": _utc_timestamp(),
+                    "event": "context_budget_exceeded",
+                }
+            )
+
+            return finish(
+                status="needs_human_review",
+                reason=(
+                    "The accumulated conversation exceeded the estimated "
+                    "safe context budget for the configured model."
+                ),
+                final_response=(
+                    "Automated processing stopped because the "
+                    "conversation grew too large for the model's context "
+                    "window. A human IT reviewer should inspect the "
+                    "ticket."
+                ),
+                steps_used=step_number - 1,
+            )
+
         try:
             raw_model_content, metrics = _call_ollama(
                 messages=messages,
@@ -2929,6 +3159,18 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--log-mode",
+        choices=sorted(SUPPORTED_LOG_MODES),
+        default=None,
+        help=(
+            "'full' (default) writes the complete trace to disk. "
+            "'redacted' writes a copy with free-text ticket/knowledge-base "
+            "content replaced by a digest; the in-memory result returned "
+            "by run_victim_agent is unaffected either way."
+        ),
+    )
+
     return parser
 
 
@@ -2948,6 +3190,7 @@ def main() -> int:
         max_steps=arguments.max_steps,
         timeout_seconds=arguments.timeout,
         log_dir=arguments.log_dir,
+        log_mode=arguments.log_mode,
     )
 
     print(

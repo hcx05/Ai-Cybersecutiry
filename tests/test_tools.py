@@ -391,8 +391,37 @@ def test_ticket_read_filesystem_error_is_structured(
     assert result["status"] == "error"
     assert result["data"] is None
     assert result["error"] == (
-        "The ticket could not be read safely."
+        "Ticket file could not be read."
     )
+
+
+def test_missing_inbox_directory_is_not_created_and_returns_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The ticket inbox directory must already exist. Unlike the previous
+    behavior, a missing directory is reported as a structured error instead
+    of being silently created as an empty directory.
+    """
+
+    missing_inbox = tmp_path / "inbox_that_does_not_exist"
+
+    monkeypatch.setattr(
+        ticket_tools,
+        "INBOX_DIR",
+        missing_inbox,
+    )
+
+    result = ticket_tools.read_ticket(
+        "TICKET-001"
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == (
+        "Ticket inbox directory does not exist."
+    )
+    assert not missing_inbox.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -2063,6 +2092,42 @@ def test_directory_preparation_error_is_structured(
         result["error"]
         == "Knowledge-base directory is unavailable."
     )
+
+
+def test_missing_knowledge_base_directory_is_not_created_and_returns_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The knowledge-base directory must already exist. Unlike the previous
+    behavior, a missing directory is reported as a structured error instead
+    of being silently created as an empty directory (which would otherwise
+    be indistinguishable from a search that legitimately matched nothing).
+    """
+
+    missing_knowledge_base = (
+        tmp_path / "knowledge_base_that_does_not_exist"
+    )
+
+    monkeypatch.setattr(
+        knowledge_base_tools,
+        "KNOWLEDGE_BASE_DIR",
+        missing_knowledge_base,
+    )
+
+    result = (
+        knowledge_base_tools
+        .search_knowledge_base(
+            query="VPN",
+            top_k=3,
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == (
+        "Knowledge-base directory does not exist."
+    )
+    assert not missing_knowledge_base.exists()
 
 
 def test_directory_scan_oserror_is_structured(

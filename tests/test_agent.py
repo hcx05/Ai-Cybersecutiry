@@ -474,6 +474,27 @@ def test_unknown_structured_mode_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
+    "mode",
+    ["full", "redacted", "FULL", " Redacted "],
+)
+def test_supported_log_modes_are_accepted(
+    mode: str,
+) -> None:
+    assert agent._validate_log_mode(
+        mode
+    ) == mode.strip().lower()
+
+
+def test_unknown_log_mode_is_rejected() -> None:
+    with pytest.raises(
+        agent.ConfigurationError
+    ):
+        agent._validate_log_mode(
+            "verbose"
+        )
+
+
+@pytest.mark.parametrize(
     ("raw_value", "expected"),
     [
         (0, 0.0),
@@ -761,8 +782,93 @@ def test_oversized_tool_result_is_replaced_with_error(
 
 
 # ---------------------------------------------------------------------------
-# Ticket-read state machine
+# Context budget
 # ---------------------------------------------------------------------------
+
+
+def test_estimated_context_budget_exceeded_is_conservative() -> None:
+    small_messages = [
+        {"role": "system", "content": "A" * 100},
+        {"role": "user", "content": "A" * 100},
+    ]
+
+    assert agent._estimated_context_budget_exceeded(
+        messages=small_messages,
+        num_ctx=8192,
+    ) is False
+
+    large_messages = [
+        {"role": "system", "content": "A" * 100_000},
+    ]
+
+    assert agent._estimated_context_budget_exceeded(
+        messages=large_messages,
+        num_ctx=8192,
+    ) is True
+
+
+def test_context_budget_exceeded_stops_before_calling_model(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+) -> None:
+    """
+    A real system prompt alone can already be a large fraction of a small
+    num_ctx. The runtime must detect this and stop before ever contacting
+    Ollama, rather than letting Ollama silently drop the oldest messages
+    (normally the system prompt) with no signal that anything went wrong.
+    """
+
+    # isolated_agent_runtime installs a tiny fake system prompt so unrelated
+    # tests stay independent of the real prompt's size. Overwrite it here
+    # with something large enough to exceed the budget on its own, the way
+    # the real ~15,000-character system prompt would against a small
+    # num_ctx.
+    isolated_agent_runtime["prompt_path"].write_text(
+        "A" * 20_000,
+        encoding="utf-8",
+    )
+
+    result = run_test_agent(
+        num_ctx=agent.MIN_CONTEXT_LENGTH,
+    )
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 0
+    assert result["reason"] == (
+        "The accumulated conversation exceeded the estimated safe context "
+        "budget for the configured model."
+    )
+    assert result["trace"][-1]["event"] == (
+        "context_budget_exceeded"
+    )
+
+    # The budget check happens before any model call or tool execution.
+    assert fake_tools == []
+
+
+def test_context_budget_not_exceeded_proceeds_normally(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_completed(
+                final_response="The ticket was reviewed."
+            ),
+        ],
+    )
+
+    result = run_test_agent(
+        num_ctx=agent.DEFAULT_NUM_CTX,
+    )
+
+    assert result["status"] == "completed"
 
 
 def test_ticket_read_success_allows_completion(
@@ -1629,6 +1735,117 @@ def test_complete_agent_tool_loop_and_reproducibility_log(
     assert saved_log["run_id"] == result["run_id"]
     assert saved_log["runtime_metadata"]["model"]["digest"] == (
         "sha256:test-model-digest"
+    )
+
+
+def test_redacted_log_mode_strips_sensitive_trace_fields(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    log_mode="redacted" only affects the on-disk copy of the run log. The
+    in-memory result returned to the caller keeps full content, so an
+    experiment harness running in the same process can still analyze
+    everything; only the persisted file is affected.
+    """
+
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_completed(
+                final_response="The ticket was reviewed."
+            ),
+        ],
+    )
+
+    result = run_test_agent(
+        log_mode="redacted",
+    )
+
+    assert result["status"] == "completed"
+    assert result["execution_configuration"]["log_mode"] == (
+        "redacted"
+    )
+
+    original_description = (
+        "I cannot connect to the company VPN."
+    )
+
+    # The in-memory result is never redacted.
+    assert (
+        result["trace"][0]["tool_result"]["data"]["ticket"][
+            "description"
+        ]
+        == original_description
+    )
+
+    log_path = (
+        isolated_agent_runtime["log_dir"]
+        / result["log_filename"]
+    )
+
+    saved_log = json.loads(
+        log_path.read_text(encoding="utf-8")
+    )
+
+    saved_ticket = saved_log["trace"][0]["tool_result"][
+        "data"
+    ]["ticket"]
+
+    assert saved_ticket["description"] != original_description
+    assert saved_ticket["description"]["redacted"] is True
+    assert saved_ticket["description"]["character_count"] == (
+        len(original_description)
+    )
+
+    # Non-sensitive fields are preserved as-is, both in the same nested
+    # ticket object and elsewhere in the saved log.
+    assert saved_ticket["ticket_id"] == "TICKET-001"
+    assert saved_ticket["status"] == "open"
+    assert saved_log["status"] == "completed"
+
+
+def test_full_log_mode_is_the_default_and_preserves_content(
+    isolated_agent_runtime: dict[str, Path],
+    fake_tools: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {"ticket_id": "TICKET-001"},
+            ),
+            make_completed(
+                final_response="The ticket was reviewed."
+            ),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["execution_configuration"]["log_mode"] == "full"
+
+    log_path = (
+        isolated_agent_runtime["log_dir"]
+        / result["log_filename"]
+    )
+
+    saved_log = json.loads(
+        log_path.read_text(encoding="utf-8")
+    )
+
+    assert (
+        saved_log["trace"][0]["tool_result"]["data"]["ticket"][
+            "description"
+        ]
+        == "I cannot connect to the company VPN."
     )
 
 

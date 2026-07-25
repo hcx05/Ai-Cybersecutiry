@@ -46,9 +46,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_INBOX_DIR = PROJECT_ROOT / "data" / "runtime" / "inbox"
 
 # Docker or tests may override the runtime inbox location.
+#
+# Deliberately NOT resolved or validated here at import time. Resolution
+# and existence validation occur inside _prepare_inbox_dir(), called from
+# read_ticket/update_ticket, so a missing or misconfigured directory
+# becomes a structured tool error instead of a failure while importing
+# this module (mirrors victim_agent/tools/knowledge_base.py).
 INBOX_DIR = Path(
     os.getenv("TICKET_INBOX_DIR", str(DEFAULT_INBOX_DIR))
-).resolve()
+)
 
 ALLOWED_STATUSES = {
     "open",
@@ -137,6 +143,33 @@ def _validate_ticket_id(ticket_id: str) -> str:
     return normalized
 
 
+def _prepare_inbox_dir() -> Path:
+    """
+    Resolve and validate the ticket inbox directory.
+
+    The directory must already exist; it is never created here. Runtime
+    environment setup (for example a controller reset step) is responsible
+    for populating data/runtime/inbox before the Victim Agent runs. Silently
+    creating an empty inbox would make a missing or misconfigured
+    environment indistinguishable from a ticket that genuinely does not
+    exist.
+    """
+
+    try:
+        inbox_root = INBOX_DIR.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise TicketToolError(
+            "Ticket inbox directory is unavailable."
+        ) from exc
+
+    if not inbox_root.is_dir():
+        raise TicketToolError(
+            "Ticket inbox directory does not exist."
+        )
+
+    return inbox_root
+
+
 def _resolve_ticket_path(ticket_id: str) -> Path:
     """
     Resolve the ticket path and confirm it remains inside the runtime inbox.
@@ -147,7 +180,7 @@ def _resolve_ticket_path(ticket_id: str) -> Path:
 
     normalized_id = _validate_ticket_id(ticket_id)
 
-    inbox_root = INBOX_DIR.resolve()
+    inbox_root = _prepare_inbox_dir()
     ticket_path = (inbox_root / f"{normalized_id}.json").resolve()
 
     try:
@@ -309,12 +342,12 @@ def read_ticket(ticket_id: str) -> dict[str, Any]:
             error=str(exc),
         )
 
-    except TicketToolError:
+    except TicketToolError as exc:
         return _base_response(
             status="error",
             operation="read_ticket",
             ticket_id=ticket_id if isinstance(ticket_id, str) else None,
-            error="The ticket could not be read safely.",
+            error=str(exc),
         )
 
     except Exception:
