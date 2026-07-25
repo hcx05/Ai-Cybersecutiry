@@ -1613,7 +1613,7 @@ def test_duplicate_id_in_unapproved_article_is_rejected(
         "   ",
     ],
 )
-def test_empty_query_returns_error(
+def test_empty_query_is_blocked(
     temporary_knowledge_base: Path,
     query: str,
 ) -> None:
@@ -1625,7 +1625,7 @@ def test_empty_query_returns_error(
         )
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
     assert result["results"] is None
     assert result["result_count"] == 0
     assert "cannot be empty" in result["error"]
@@ -1640,7 +1640,7 @@ def test_empty_query_returns_error(
         ["VPN"],
     ],
 )
-def test_non_string_query_returns_error(
+def test_non_string_query_is_blocked(
     temporary_knowledge_base: Path,
     query: object,
 ) -> None:
@@ -1652,7 +1652,7 @@ def test_non_string_query_returns_error(
         )
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
     assert result["query"] is None
     assert result["results"] is None
     assert result["error"] == (
@@ -1660,7 +1660,7 @@ def test_non_string_query_returns_error(
     )
 
 
-def test_overlong_query_returns_error(
+def test_overlong_query_is_blocked(
     temporary_knowledge_base: Path,
 ) -> None:
     result = (
@@ -1678,11 +1678,11 @@ def test_overlong_query_returns_error(
         )
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
     assert "character limit" in result["error"]
 
 
-def test_query_with_null_byte_returns_error(
+def test_query_with_null_byte_is_blocked(
     temporary_knowledge_base: Path,
 ) -> None:
     result = (
@@ -1693,7 +1693,7 @@ def test_query_with_null_byte_returns_error(
         )
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
     assert "control characters" in (
         result["error"]
     )
@@ -1708,7 +1708,7 @@ def test_query_with_null_byte_returns_error(
         100,
     ],
 )
-def test_out_of_range_top_k_returns_error(
+def test_out_of_range_top_k_is_blocked(
     temporary_knowledge_base: Path,
     top_k: int,
 ) -> None:
@@ -1720,7 +1720,7 @@ def test_out_of_range_top_k_returns_error(
         )
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
     assert "must be between" in result["error"]
 
 
@@ -1734,7 +1734,7 @@ def test_out_of_range_top_k_returns_error(
         None,
     ],
 )
-def test_non_integer_top_k_returns_error(
+def test_non_integer_top_k_is_blocked(
     temporary_knowledge_base: Path,
     top_k: object,
 ) -> None:
@@ -1746,7 +1746,7 @@ def test_non_integer_top_k_returns_error(
         )
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
     assert result["results"] is None
     assert result["error"] == (
         "top_k must be an integer."

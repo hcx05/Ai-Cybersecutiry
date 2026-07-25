@@ -12,6 +12,18 @@ Supported operation:
 
     search_knowledge_base(query, top_k)
 
+Result "status" convention (mirrors victim_agent/tools/ticket.py):
+
+    blocked     The caller-supplied query or top_k was invalid (wrong
+                type, empty, too long, contains forbidden control
+                characters, or out of the allowed top_k range).
+    no_results  query and top_k were valid, but no approved article
+                scored above zero.
+    error       query and top_k were valid, but the knowledge-base
+                directory, files, or internal processing could not be
+                handled safely.
+    success     The operation completed with at least one result.
+
 Only articles with:
 
     "approved": true
@@ -884,7 +896,7 @@ def search_knowledge_base(
     Return shape:
 
         {
-            "status": "success | no_results | error",
+            "status": "success | no_results | blocked | error",
             "operation": "search_knowledge_base",
             "query": "...",
             "top_k": 3,
@@ -900,6 +912,8 @@ def search_knowledge_base(
     Invalid individual article files are skipped and represented as
     structured warnings.
 
+    An invalid query or top_k argument (wrong type, empty, too long,
+    forbidden characters, or out-of-range top_k) returns status="blocked".
     Directory-level failures, duplicate article IDs, article-count limit
     violations, and unexpected internal failures return status="error".
     """
@@ -922,7 +936,7 @@ def search_knowledge_base(
 
     except KnowledgeBaseToolError as exc:
         return _base_response(
-            status="error",
+            status="blocked",
             query=(
                 query
                 if isinstance(query, str)
