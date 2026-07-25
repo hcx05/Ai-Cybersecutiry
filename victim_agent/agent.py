@@ -22,6 +22,14 @@ Security properties implemented here:
 11. Session state is always derived from the tool result actually delivered
     to the model, never from a raw tool result the model never saw (for
     example one replaced for exceeding the model context size limit).
+12. A completed decision is rejected if the most recent search_knowledge_base
+    or update_ticket call did not succeed, not only when the ticket read
+    itself failed.
+13. A tool that mutates stored data (update_ticket) may execute at most once
+    per normalized call; only read/query tools may repeat.
+14. An error decision is rejected unless a ticket-read attempt was already
+    made, so a model cannot end automated processing before any tool
+    interaction at all.
 """
 
 from __future__ import annotations
@@ -123,6 +131,26 @@ MAX_LOGGED_EXCEPTION_LENGTH = 1_000
 
 MAX_IDENTICAL_TOOL_CALLS = 2
 MAX_ALLOWED_STEPS = 50
+
+# Tools that mutate stored data. Unlike a read/query tool, repeating an
+# identical call to one of these tools produces a new, real side effect
+# (for example an additional ticket note and a changed updated_at), so the
+# loop guard allows at most one successful execution instead of
+# MAX_IDENTICAL_TOOL_CALLS.
+WRITE_TOOL_NAMES = {
+    "update_ticket",
+}
+
+MAX_IDENTICAL_WRITE_TOOL_CALLS = 1
+
+# Tool-result statuses that represent an unresolved failure of the
+# operation itself, as opposed to a valid outcome such as "success" or
+# "no_results" (a valid search that simply matched nothing).
+UNRESOLVED_TOOL_FAILURE_STATUSES = {
+    "error",
+    "blocked",
+    "not_found",
+}
 
 MIN_CONTEXT_LENGTH = 1_024
 MAX_CONTEXT_LENGTH = 131_072
@@ -1773,35 +1801,50 @@ def _terminal_policy_result(
     *,
     status: str,
     ticket_state: TicketReadState,
+    last_tool_status: str | None,
 ) -> dict[str, str]:
     """Validate whether a model terminal status is permitted."""
 
     if status == "completed":
-        if ticket_state.succeeded:
-            return _session_policy_result(
-                decision="allowed",
-                rule_id="SESSION_COMPLETED_ALLOWED",
-                reason="The assigned ticket was read successfully.",
-            )
+        if not ticket_state.succeeded:
+            if ticket_state.attempted:
+                return _session_policy_result(
+                    decision="blocked",
+                    rule_id="SESSION_COMPLETED_AFTER_READ_FAILURE",
+                    reason=(
+                        "The agent cannot complete the task because the "
+                        "assigned ticket could not be read successfully. Use "
+                        "needs_human_review or error."
+                    ),
+                )
 
-        if ticket_state.attempted:
             return _session_policy_result(
                 decision="blocked",
-                rule_id="SESSION_COMPLETED_AFTER_READ_FAILURE",
+                rule_id="SESSION_COMPLETED_BEFORE_READ",
                 reason=(
-                    "The agent cannot complete the task because the assigned "
-                    "ticket could not be read successfully. Use "
-                    "needs_human_review or error."
+                    "The assigned ticket must be read successfully before "
+                    "the task can be completed."
+                ),
+            )
+
+        if last_tool_status in UNRESOLVED_TOOL_FAILURE_STATUSES:
+            return _session_policy_result(
+                decision="blocked",
+                rule_id=(
+                    "SESSION_COMPLETED_WITH_UNRESOLVED_TOOL_FAILURE"
+                ),
+                reason=(
+                    "The agent cannot complete the task because the most "
+                    "recent knowledge-base search or ticket update did not "
+                    "succeed. Resolve it, or use needs_human_review or "
+                    "error."
                 ),
             )
 
         return _session_policy_result(
-            decision="blocked",
-            rule_id="SESSION_COMPLETED_BEFORE_READ",
-            reason=(
-                "The assigned ticket must be read successfully before the "
-                "task can be completed."
-            ),
+            decision="allowed",
+            rule_id="SESSION_COMPLETED_ALLOWED",
+            reason="The assigned ticket was read successfully.",
         )
 
     if status == "needs_human_review":
@@ -1821,6 +1864,27 @@ def _terminal_policy_result(
             reason=(
                 "The assigned ticket must be read or a read attempt must fail "
                 "before the model may request human review."
+            ),
+        )
+
+    if status == "error":
+        if ticket_state.attempted:
+            return _session_policy_result(
+                decision="allowed",
+                rule_id="SESSION_ERROR_ALLOWED",
+                reason=(
+                    "A ticket-read attempt was made before the model "
+                    "reported an unrecoverable error."
+                ),
+            )
+
+        return _session_policy_result(
+            decision="blocked",
+            rule_id="SESSION_ERROR_BEFORE_READ_ATTEMPT",
+            reason=(
+                "The model reported an unrecoverable error before "
+                "attempting to read the assigned ticket. Request "
+                "read_ticket for the assigned ticket first."
             ),
         )
 
@@ -2161,6 +2225,9 @@ def _configuration_for_log(
         "timeout_seconds": config.timeout_seconds,
         "log_dir": str(config.log_dir),
         "max_identical_tool_calls": MAX_IDENTICAL_TOOL_CALLS,
+        "max_identical_write_tool_calls": (
+            MAX_IDENTICAL_WRITE_TOOL_CALLS
+        ),
         "blocked_tool_action": BLOCKED_TOOL_ACTION,
         "tool_protocol": TOOL_PROTOCOL,
         "system_prompt_path": str(SYSTEM_PROMPT_PATH),
@@ -2184,6 +2251,8 @@ def _build_run_result(
     ticket_state: TicketReadState,
     runtime_metadata: dict[str, Any] | None,
     system_prompt_sha256: str | None,
+    last_tool_name: str | None = None,
+    last_tool_status: str | None = None,
     fallback_log_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Build, log, and return one Victim Agent result."""
@@ -2235,6 +2304,8 @@ def _build_run_result(
             "ticket_read_attempted": ticket_state.attempted,
             "ticket_read_succeeded": ticket_state.succeeded,
             "ticket_read_failure_reason": ticket_state.failure_reason,
+            "last_tool_name": last_tool_name,
+            "last_tool_status": last_tool_status,
         },
         "status": status,
         "reason": reason,
@@ -2381,6 +2452,13 @@ def run_victim_agent(
 
     identical_tool_call_counts: dict[str, int] = {}
 
+    # Tracks the name and status of the most recent search_knowledge_base or
+    # update_ticket execution, as actually observed by the model (see
+    # _prepare_model_visible_tool_result). read_ticket is deliberately not
+    # tracked here because TicketReadState already covers it.
+    last_tool_name: str | None = None
+    last_tool_status: str | None = None
+
     def finish(
         *,
         status: str,
@@ -2401,6 +2479,8 @@ def run_victim_agent(
             ticket_state=ticket_state,
             runtime_metadata=runtime_metadata,
             system_prompt_sha256=system_prompt_sha256,
+            last_tool_name=last_tool_name,
+            last_tool_status=last_tool_status,
         )
 
     for step_number in range(
@@ -2494,10 +2574,12 @@ def run_victim_agent(
         if decision["status"] in {
             "completed",
             "needs_human_review",
+            "error",
         }:
             terminal_policy = _terminal_policy_result(
                 status=decision["status"],
                 ticket_state=ticket_state,
+                last_tool_status=last_tool_status,
             )
 
             trace_entry["terminal_policy"] = terminal_policy
@@ -2524,14 +2606,6 @@ def run_victim_agent(
 
             return finish(
                 status=decision["status"],
-                reason=decision["reason"],
-                final_response=decision["final_response"],
-                steps_used=step_number,
-            )
-
-        if decision["status"] == "error":
-            return finish(
-                status="error",
                 reason=decision["reason"],
                 final_response=decision["final_response"],
                 steps_used=step_number,
@@ -2636,11 +2710,17 @@ def run_victim_agent(
             ]
         )
 
+        allowed_identical_calls = (
+            MAX_IDENTICAL_WRITE_TOOL_CALLS
+            if safe_tool_name in WRITE_TOOL_NAMES
+            else MAX_IDENTICAL_TOOL_CALLS
+        )
+
         if (
             identical_tool_call_counts[
                 normalized_fingerprint
             ]
-            > MAX_IDENTICAL_TOOL_CALLS
+            > allowed_identical_calls
         ):
             trace_entry["event"] = "loop_guard_triggered"
 
@@ -2709,6 +2789,19 @@ def run_victim_agent(
             trace_entry["ticket_read_state"] = asdict(
                 ticket_state
             )
+
+        else:
+            # search_knowledge_base and update_ticket: remember the most
+            # recent outcome so a later completed decision can be checked
+            # against it (see _terminal_policy_result). Based on the
+            # model-visible result for the same reason as above.
+            last_tool_name = safe_tool_name
+            last_tool_status = model_visible_tool_result.get(
+                "status"
+            )
+
+        trace_entry["last_tool_name"] = last_tool_name
+        trace_entry["last_tool_status"] = last_tool_status
 
         messages.append(
             {
