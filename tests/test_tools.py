@@ -746,7 +746,7 @@ def test_update_ticket_with_invalid_json_returns_error(
     )
 
 
-def test_update_ticket_with_non_string_status_returns_error(
+def test_update_ticket_with_non_string_status_is_blocked(
     temporary_inbox: Path,
 ) -> None:
     write_ticket(
@@ -759,13 +759,14 @@ def test_update_ticket_with_non_string_status_returns_error(
         note="Test note.",
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
+    assert result["ticket_id"] == "TICKET-001"
     assert result["error"] == (
         "Ticket status must be a string."
     )
 
 
-def test_update_ticket_with_non_string_note_returns_error(
+def test_update_ticket_with_non_string_note_is_blocked(
     temporary_inbox: Path,
 ) -> None:
     write_ticket(
@@ -778,7 +779,8 @@ def test_update_ticket_with_non_string_note_returns_error(
         note=123,  # type: ignore[arg-type]
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "blocked"
+    assert result["ticket_id"] == "TICKET-001"
     assert result["error"] == (
         "Ticket note must be a string."
     )
