@@ -942,6 +942,150 @@ def test_malformed_ticket_json_allows_human_review(
     )
 
 
+
+def test_oversized_read_result_does_not_mark_ticket_as_successful(
+    isolated_agent_runtime: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Keep runtime ticket state aligned with the exact result visible to the model.
+
+    The underlying read tool may return success, while the model boundary
+    replaces an oversized result with a structured error. In that situation,
+    the Agent must treat the read as failed because the model never received
+    usable ticket content.
+    """
+
+    monkeypatch.setattr(
+        agent,
+        "MAX_TOOL_RESULT_CHARACTERS",
+        500,
+    )
+
+    def oversized_read_ticket(
+        ticket_id: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "operation": "read_ticket",
+            "ticket_id": ticket_id,
+            "data": {
+                "ticket": {
+                    "ticket_id": ticket_id,
+                    "subject": "Large ticket",
+                    "description": "A" * 10_000,
+                    "status": "open",
+                    "notes": [],
+                }
+            },
+            "error": None,
+        }
+
+    monkeypatch.setattr(
+        agent,
+        "read_ticket",
+        oversized_read_ticket,
+    )
+
+    model_calls = install_model_sequence(
+        monkeypatch,
+        [
+            make_tool_request(
+                "read_ticket",
+                {
+                    "ticket_id": "TICKET-001",
+                },
+            ),
+            make_completed(
+                final_response="The ticket was completed."
+            ),
+            make_human_review(),
+        ],
+    )
+
+    result = run_test_agent()
+
+    assert result["status"] == "needs_human_review"
+    assert result["steps_used"] == 3
+
+    assert result["session_state"] == {
+        "ticket_read_attempted": True,
+        "ticket_read_succeeded": False,
+        "ticket_read_failure_reason": (
+            "Tool result exceeded the maximum size "
+            "allowed for model context."
+        ),
+    }
+
+    # The trusted trace preserves what the underlying tool actually returned.
+    assert result["trace"][0]["tool_result"]["status"] == (
+        "success"
+    )
+
+    # The trace also records the exact replacement delivered to the model.
+    assert result["trace"][0][
+        "model_visible_tool_result"
+    ]["status"] == "error"
+    assert result["trace"][0][
+        "model_visible_tool_result"
+    ]["error"] == (
+        "Tool result exceeded the maximum size "
+        "allowed for model context."
+    )
+    assert result["trace"][0][
+        "tool_result_replaced_for_model"
+    ] is True
+
+    assert result["trace"][0]["ticket_read_state"] == {
+        "attempted": True,
+        "succeeded": False,
+        "failure_reason": (
+            "Tool result exceeded the maximum size "
+            "allowed for model context."
+        ),
+    }
+
+    # A model completion after the model-visible read failure must be blocked.
+    assert result["trace"][1][
+        "terminal_policy"
+    ]["rule_id"] == (
+        "SESSION_COMPLETED_AFTER_READ_FAILURE"
+    )
+
+    # The following human-review decision is the valid terminal transition.
+    assert result["trace"][2][
+        "terminal_policy"
+    ]["rule_id"] == "SESSION_HUMAN_REVIEW_ALLOWED"
+
+    returned_tool_message = json.loads(
+        model_calls[1]["messages"][-1]["content"]
+    )
+
+    assert returned_tool_message["security_label"] == (
+        "UNTRUSTED_DATA"
+    )
+    assert returned_tool_message["result"]["status"] == (
+        "error"
+    )
+    assert returned_tool_message["result"]["error"] == (
+        "Tool result exceeded the maximum size "
+        "allowed for model context."
+    )
+
+    runtime_feedback = json.loads(
+        model_calls[2]["messages"][-1]["content"]
+    )
+
+    assert runtime_feedback["security_label"] == (
+        "TRUSTED_RUNTIME_POLICY"
+    )
+    assert runtime_feedback["rule_id"] == (
+        "SESSION_COMPLETED_AFTER_READ_FAILURE"
+    )
+    assert runtime_feedback["required_next_action"] == (
+        "Return needs_human_review or error."
+    )
+
 def test_completed_after_ticket_read_failure_is_blocked_then_review_allowed(
     isolated_agent_runtime: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
