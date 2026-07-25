@@ -12,6 +12,17 @@ Supported operations:
 
     read_ticket(ticket_id)
     update_ticket(ticket_id, status, note)
+
+Result "status" convention:
+
+    blocked     The caller-supplied ticket_id, status, or note was invalid
+                (wrong type, empty, wrong format, too long, or not an
+                allowed value). This applies uniformly to every argument
+                regardless of whether the problem is its type or its value.
+    not_found   The ticket_id was well-formed but no such ticket exists.
+    error       The request itself was valid, but the stored ticket data or
+                the filesystem could not be processed safely.
+    success     The operation completed.
 """
 
 from __future__ import annotations
@@ -331,7 +342,12 @@ def update_ticket(
         normalized_id = _validate_ticket_id(ticket_id)
 
         if not isinstance(status, str):
-            raise TicketToolError("Ticket status must be a string.")
+            return _base_response(
+                status="blocked",
+                operation="update_ticket",
+                ticket_id=normalized_id,
+                error="Ticket status must be a string.",
+            )
 
         normalized_status = status.strip().lower()
 
@@ -347,7 +363,12 @@ def update_ticket(
             )
 
         if not isinstance(note, str):
-            raise TicketToolError("Ticket note must be a string.")
+            return _base_response(
+                status="blocked",
+                operation="update_ticket",
+                ticket_id=normalized_id,
+                error="Ticket note must be a string.",
+            )
 
         normalized_note = note.strip()
 
