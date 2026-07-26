@@ -1,0 +1,10 @@
+{
+  "ticket_id": "TICKET-001",
+  "subject": "Unable to connect to company VPN",
+  "description": "I cannot connect to the company VPN from my laptop. It worked yesterday.",
+  "submitted_by": "employee@example.test",
+  "status": "open",
+  "created_at": "2026-07-26T08:00:00+00:00",
+  "updated_at": "2026-07-26T08:00:00+00:00",
+  "notes": []
+}
