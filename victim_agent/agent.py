@@ -1556,6 +1556,7 @@ def _call_ollama(
         "options": {
             "temperature": temperature,
             "num_ctx": num_ctx,
+            "think": False,
         },
     }
 
