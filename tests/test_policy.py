@@ -663,6 +663,209 @@ def test_update_ticket_extra_argument_is_blocked() -> None:
 
 
 # ---------------------------------------------------------------------------
+# reset_password validation
+# ---------------------------------------------------------------------------
+
+
+def test_valid_reset_password_is_allowed() -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": "employee@example.test",
+            },
+        }
+    )
+
+    assert result["decision"] == "allowed"
+    assert result["rule_id"] == "RESET_PASSWORD_ALLOWED"
+    assert result["tool_name"] == "reset_password"
+    assert result["arguments"] == {
+        "ticket_id": "TICKET-001",
+        "employee_email": "employee@example.test",
+    }
+
+
+def test_reset_password_normalizes_whitespace() -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "  TICKET-001  ",
+                "employee_email": "  employee@example.test  ",
+            },
+        }
+    )
+
+    assert result["decision"] == "allowed"
+    assert result["arguments"] == {
+        "ticket_id": "TICKET-001",
+        "employee_email": "employee@example.test",
+    }
+
+
+@pytest.mark.parametrize(
+    "ticket_id",
+    [
+        "",
+        "   ",
+        "../TICKET-001",
+        "../../etc/passwd",
+        "ticket/001",
+        r"ticket\001",
+        "/etc/passwd",
+        "TICKET 001",
+        ".",
+        "..",
+        123,
+        None,
+    ],
+)
+def test_reset_password_invalid_ticket_ids_are_blocked(
+    ticket_id: object,
+) -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": ticket_id,
+                "employee_email": "employee@example.test",
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_INVALID_TICKET_ID"
+    assert result["arguments"] is None
+
+
+def test_reset_password_missing_argument_is_blocked() -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_INVALID_ARGUMENT_KEYS"
+    assert "employee_email" in result["reason"]
+
+
+def test_reset_password_extra_argument_is_blocked() -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": "employee@example.test",
+                "new_password": "hunter2",
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_INVALID_ARGUMENT_KEYS"
+    assert "new_password" in result["reason"]
+
+
+@pytest.mark.parametrize("employee_email", [123, True, None, ["employee@example.test"]])
+def test_reset_password_non_string_email_is_blocked(
+    employee_email: object,
+) -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": employee_email,
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_EMAIL_NOT_STRING"
+
+
+@pytest.mark.parametrize("employee_email", ["", "   "])
+def test_reset_password_empty_email_is_blocked(
+    employee_email: str,
+) -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": employee_email,
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_EMAIL_EMPTY"
+
+
+def test_reset_password_overlong_email_is_blocked() -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": ("a" * 255) + "@example.test",
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_EMAIL_TOO_LONG"
+
+
+def test_reset_password_email_with_null_byte_is_blocked() -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": "employee@example.test\x00hidden",
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_EMAIL_CONTROL_CHARACTERS"
+
+
+@pytest.mark.parametrize(
+    "employee_email",
+    [
+        "not-an-email",
+        "missing-domain@",
+        "@missing-local.test",
+        "double@@example.test",
+        "no-tld@example",
+    ],
+)
+def test_reset_password_invalid_email_format_is_blocked(
+    employee_email: str,
+) -> None:
+    result = validate_tool_call(
+        {
+            "name": "reset_password",
+            "arguments": {
+                "ticket_id": "TICKET-001",
+                "employee_email": employee_email,
+            },
+        }
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["rule_id"] == "RESET_PASSWORD_EMAIL_INVALID_FORMAT"
+
+
+# ---------------------------------------------------------------------------
 # Convenience helper
 # ---------------------------------------------------------------------------
 

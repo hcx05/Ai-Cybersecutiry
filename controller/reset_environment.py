@@ -13,11 +13,17 @@ present. reset_environment() clears data/runtime/ and repopulates it from
 data/baseline/ so every experiment case, and every round within a
 campaign, starts from the same known state.
 
+data/runtime/accounts/ (the reset_password execution log) has no
+baseline counterpart: nothing should ever be "restored" into it, only
+cleared, so a password-reset record from a previous round can never leak
+into the next case's results.
+
 Runtime destination directories are imported directly from
-victim_agent.tools.ticket and victim_agent.tools.knowledge_base rather
-than re-reading TICKET_INBOX_DIR / KNOWLEDGE_BASE_DIR independently, so a
-reset can never target a different location than the one the Victim Agent
-actually reads from.
+victim_agent.tools.ticket, victim_agent.tools.knowledge_base, and
+victim_agent.tools.account rather than re-reading TICKET_INBOX_DIR /
+KNOWLEDGE_BASE_DIR / ACCOUNT_RESET_LOG_DIR independently, so a reset can
+never target a different location than the one the Victim Agent actually
+reads from or writes to.
 
 Typical use, from controller/run_experiment.py, before every case:
 
@@ -38,6 +44,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from victim_agent.tools.account import (
+    ACCOUNTS_DIR as DEFAULT_RUNTIME_ACCOUNTS_DIR,
+)
 from victim_agent.tools.knowledge_base import (
     KNOWLEDGE_BASE_DIR as DEFAULT_RUNTIME_KNOWLEDGE_BASE_DIR,
 )
@@ -209,6 +218,7 @@ def reset_environment(
     baseline_knowledge_base_dir: Path | str | None = None,
     runtime_inbox_dir: Path | str | None = None,
     runtime_knowledge_base_dir: Path | str | None = None,
+    runtime_accounts_dir: Path | str | None = None,
 ) -> dict[str, Any]:
     """
     Reset data/runtime/ to the known clean state committed under
@@ -220,6 +230,10 @@ def reset_environment(
     to run before every experiment case in controller/run_experiment.py,
     so each Attack Agent round starts from the same ticket and
     knowledge-base content regardless of what a previous round wrote.
+
+    data/runtime/accounts/ (the reset_password execution log) is cleared
+    the same way, but has no baseline counterpart to restore from: it
+    should simply be empty at the start of every case.
 
     Returns a structured summary rather than printing directly, so the
     caller can record it as part of the experiment log.
@@ -250,6 +264,12 @@ def reset_environment(
         else DEFAULT_RUNTIME_KNOWLEDGE_BASE_DIR,
         label="Runtime knowledge base",
     )
+    runtime_accounts = _resolve_runtime_directory(
+        Path(runtime_accounts_dir)
+        if runtime_accounts_dir is not None
+        else DEFAULT_RUNTIME_ACCOUNTS_DIR,
+        label="Runtime accounts",
+    )
 
     _reject_matching_directories(
         baseline_tickets,
@@ -264,6 +284,7 @@ def reset_environment(
 
     removed_tickets = _clear_runtime_directory(runtime_inbox)
     removed_articles = _clear_runtime_directory(runtime_knowledge_base)
+    removed_account_records = _clear_runtime_directory(runtime_accounts)
 
     restored_tickets = _copy_baseline_directory(
         baseline_tickets,
@@ -287,6 +308,12 @@ def reset_environment(
             "runtime_dir": str(runtime_knowledge_base),
             "removed": removed_articles,
             "restored": restored_articles,
+        },
+        "accounts": {
+            "baseline_dir": None,
+            "runtime_dir": str(runtime_accounts),
+            "removed": removed_account_records,
+            "restored": [],
         },
     }
 
@@ -321,6 +348,11 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the runtime knowledge-base directory.",
     )
+    parser.add_argument(
+        "--runtime-accounts-dir",
+        default=None,
+        help="Override the runtime account-reset log directory.",
+    )
 
     return parser
 
@@ -341,6 +373,7 @@ def main() -> int:
             runtime_knowledge_base_dir=(
                 arguments.runtime_knowledge_base_dir
             ),
+            runtime_accounts_dir=arguments.runtime_accounts_dir,
         )
     except ResetEnvironmentError as exc:
         print(

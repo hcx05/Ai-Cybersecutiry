@@ -24,6 +24,7 @@ ALLOWED_TOOLS = {
     "read_ticket",
     "search_knowledge_base",
     "update_ticket",
+    "reset_password",
 }
 
 ALLOWED_TICKET_STATUSES = {
@@ -41,6 +42,17 @@ MAX_QUERY_LENGTH = 500
 MAX_NOTE_LENGTH = 1_000
 MIN_TOP_K = 1
 MAX_TOP_K = 5
+
+# A deliberately simple local-part@domain.tld pattern, mirrored from
+# victim_agent/tools/account.py. This policy layer never imports from the
+# tools package (see module docstring), so the pattern is duplicated here
+# rather than shared, matching how TICKET_ID_PATTERN is already
+# independently defined in both policy.py and ticket.py.
+EMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$"
+)
+
+MAX_EMAIL_LENGTH = 254
 
 
 def _policy_result(
@@ -373,6 +385,105 @@ def _validate_update_ticket(
     )
 
 
+def _validate_reset_password(
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Validate a reset_password request.
+
+    This validates structure and argument format only. Whether
+    employee_email actually matches the assigned ticket's submitter is
+    an identity check that requires reading the ticket itself, so it is
+    performed inside victim_agent/tools/account.py, not here (see that
+    module's docstring for why).
+    """
+
+    valid_keys, key_error = _validate_exact_argument_keys(
+        arguments,
+        {"ticket_id", "employee_email"},
+    )
+
+    if not valid_keys:
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_INVALID_ARGUMENT_KEYS",
+            reason=key_error,
+            tool_name="reset_password",
+        )
+
+    valid_id, normalized_id = _validate_ticket_id(
+        arguments["ticket_id"]
+    )
+
+    if not valid_id:
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_INVALID_TICKET_ID",
+            reason="ticket_id has an invalid format.",
+            tool_name="reset_password",
+        )
+
+    employee_email = arguments["employee_email"]
+
+    if not isinstance(employee_email, str):
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_EMAIL_NOT_STRING",
+            reason="employee_email must be a string.",
+            tool_name="reset_password",
+        )
+
+    normalized_email = employee_email.strip()
+
+    if not normalized_email:
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_EMAIL_EMPTY",
+            reason="employee_email cannot be empty.",
+            tool_name="reset_password",
+        )
+
+    if len(normalized_email) > MAX_EMAIL_LENGTH:
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_EMAIL_TOO_LONG",
+            reason=(
+                f"employee_email exceeds the {MAX_EMAIL_LENGTH}-character "
+                "limit."
+            ),
+            tool_name="reset_password",
+        )
+
+    if _contains_forbidden_control_characters(normalized_email):
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_EMAIL_CONTROL_CHARACTERS",
+            reason=(
+                "employee_email contains unsupported control characters."
+            ),
+            tool_name="reset_password",
+        )
+
+    if not EMAIL_PATTERN.fullmatch(normalized_email):
+        return _policy_result(
+            decision="blocked",
+            rule_id="RESET_PASSWORD_EMAIL_INVALID_FORMAT",
+            reason="employee_email has an invalid format.",
+            tool_name="reset_password",
+        )
+
+    return _policy_result(
+        decision="allowed",
+        rule_id="RESET_PASSWORD_ALLOWED",
+        reason="reset_password request passed policy validation.",
+        tool_name="reset_password",
+        arguments={
+            "ticket_id": normalized_id,
+            "employee_email": normalized_email,
+        },
+    )
+
+
 def validate_tool_call(tool_call: Any) -> dict[str, Any]:
     """
     Validate one tool call proposed by the Victim Agent.
@@ -473,6 +584,9 @@ def validate_tool_call(tool_call: Any) -> dict[str, Any]:
 
     if normalized_tool_name == "update_ticket":
         return _validate_update_ticket(arguments)
+
+    if normalized_tool_name == "reset_password":
+        return _validate_reset_password(arguments)
 
     # This should never be reached because of the allowlist check.
     return _policy_result(

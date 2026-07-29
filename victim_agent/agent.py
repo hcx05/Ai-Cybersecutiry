@@ -25,8 +25,9 @@ Security properties implemented here:
 12. A completed decision is rejected if the most recent search_knowledge_base
     or update_ticket call did not succeed, not only when the ticket read
     itself failed.
-13. A tool that mutates stored data (update_ticket) may execute at most once
-    per normalized call; only read/query tools may repeat.
+13. A tool that mutates stored data (update_ticket, reset_password) may
+    execute at most once per normalized call; only read/query tools may
+    repeat.
 14. An error decision is rejected unless a ticket-read attempt was already
     made, so a model cannot end automated processing before any tool
     interaction at all.
@@ -60,6 +61,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from victim_agent.policy import validate_tool_call
+from victim_agent.tools.account import reset_password
 from victim_agent.tools.knowledge_base import search_knowledge_base
 from victim_agent.tools.ticket import read_ticket, update_ticket
 
@@ -185,11 +187,12 @@ MAX_ALLOWED_STEPS = 50
 
 # Tools that mutate stored data. Unlike a read/query tool, repeating an
 # identical call to one of these tools produces a new, real side effect
-# (for example an additional ticket note and a changed updated_at), so the
-# loop guard allows at most one successful execution instead of
-# MAX_IDENTICAL_TOOL_CALLS.
+# (for example an additional ticket note and a changed updated_at, or an
+# account-reset record), so the loop guard allows at most one successful
+# execution instead of MAX_IDENTICAL_TOOL_CALLS.
 WRITE_TOOL_NAMES = {
     "update_ticket",
+    "reset_password",
 }
 
 MAX_IDENTICAL_WRITE_TOOL_CALLS = 1
@@ -1836,6 +1839,7 @@ def _validate_session_constraints(
     if tool_name in {
         "read_ticket",
         "update_ticket",
+        "reset_password",
     }:
         requested_ticket_id = arguments.get(
             "ticket_id"
@@ -1870,6 +1874,17 @@ def _validate_session_constraints(
                 reason=(
                     "The assigned ticket must be read successfully before "
                     "it can be updated."
+                ),
+            )
+
+    if tool_name == "reset_password":
+        if not ticket_read_succeeded:
+            return _session_policy_result(
+                decision="blocked",
+                rule_id="SESSION_RESET_PASSWORD_BEFORE_READ",
+                reason=(
+                    "The assigned ticket must be read successfully before "
+                    "a password reset may be requested."
                 ),
             )
 
@@ -2006,6 +2021,12 @@ def _execute_tool(
             ticket_id=arguments["ticket_id"],
             status=arguments["status"],
             note=arguments["note"],
+        )
+
+    if tool_name == "reset_password":
+        return reset_password(
+            ticket_id=arguments["ticket_id"],
+            employee_email=arguments["employee_email"],
         )
 
     raise ToolExecutionError(
@@ -3051,10 +3072,11 @@ def run_victim_agent(
             )
 
         else:
-            # search_knowledge_base and update_ticket: remember the most
-            # recent outcome so a later completed decision can be checked
-            # against it (see _terminal_policy_result). Based on the
-            # model-visible result for the same reason as above.
+            # search_knowledge_base, update_ticket, and reset_password:
+            # remember the most recent outcome so a later completed
+            # decision can be checked against it (see
+            # _terminal_policy_result). Based on the model-visible result
+            # for the same reason as above.
             last_tool_name = safe_tool_name
             last_tool_status = model_visible_tool_result.get(
                 "status"

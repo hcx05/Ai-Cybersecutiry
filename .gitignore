@@ -12,11 +12,13 @@ venv/
 data/runtime/inbox/*
 data/runtime/knowledge_base/*
 data/runtime/vector_store/*
+data/runtime/accounts/*
 
 # Keep empty runtime directories
 !data/runtime/inbox/.gitkeep
 !data/runtime/knowledge_base/.gitkeep
 !data/runtime/vector_store/.gitkeep
+!data/runtime/accounts/.gitkeep
 
 # Experiment logs
 logs/attack_agent/*
