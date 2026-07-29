@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -111,6 +112,24 @@ def _utc_timestamp() -> str:
     """Return a timezone-aware UTC timestamp."""
 
     return datetime.now(timezone.utc).isoformat()
+
+
+def _filename_timestamp(iso_timestamp: str) -> str:
+    """Convert an ISO-8601 UTC timestamp into a compact, sortable prefix."""
+
+    try:
+        parsed = datetime.fromisoformat(iso_timestamp)
+    except (TypeError, ValueError):
+        parsed = datetime.now(timezone.utc)
+
+    return parsed.strftime("%Y%m%d-%H%M%S")
+
+
+def _sanitize_for_filename(value: str) -> str:
+    """Strip characters that are unsafe or noisy in filenames."""
+
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    return cleaned.strip("-") or "unknown"
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -303,17 +322,38 @@ def _deliver_payload(payload: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _campaign_filename_prefix(
+    *,
+    started_at: str,
+    goal_id: str,
+    campaign_id: str,
+) -> str:
+    """Build the shared timestamp_goal_shortid prefix for campaign log files."""
+
+    timestamp = _filename_timestamp(started_at)
+    sanitized_goal_id = _sanitize_for_filename(goal_id)
+    short_campaign_id = campaign_id[:8]
+
+    return f"{timestamp}_{sanitized_goal_id}_{short_campaign_id}"
+
+
 def _write_round_log(
     *,
     campaign_id: str,
+    started_at: str,
+    goal_id: str,
     attack_round: AttackRound,
     log_dir: Path,
 ) -> str:
     """Write one round's full record to logs/attack_agent/."""
 
+    prefix = _campaign_filename_prefix(
+        started_at=started_at,
+        goal_id=goal_id,
+        campaign_id=campaign_id,
+    )
     filename = (
-        f"{campaign_id}_round_{attack_round.payload.round_number}"
-        f"{JSON_SUFFIX}"
+        f"{prefix}_round_{attack_round.payload.round_number}{JSON_SUFFIX}"
     )
     _atomic_write_json(log_dir / filename, attack_round.to_dict())
     return filename
@@ -322,12 +362,19 @@ def _write_round_log(
 def _write_campaign_log(
     *,
     campaign_id: str,
+    started_at: str,
+    goal_id: str,
     summary: dict[str, Any],
     log_dir: Path,
 ) -> str:
     """Write the campaign-level summary to logs/attack_agent/."""
 
-    filename = f"{campaign_id}_summary{JSON_SUFFIX}"
+    prefix = _campaign_filename_prefix(
+        started_at=started_at,
+        goal_id=goal_id,
+        campaign_id=campaign_id,
+    )
+    filename = f"{prefix}_summary{JSON_SUFFIX}"
     _atomic_write_json(log_dir / filename, summary)
     return filename
 
@@ -390,6 +437,7 @@ def run_campaign(
         resolved_article_id = None
 
     campaign_id = uuid.uuid4().hex
+    campaign_started_at = _utc_timestamp()
     history: list[AttackRound] = []
     round_log_filenames: list[str] = []
     stopped_reason = "max_rounds_reached"
@@ -479,6 +527,8 @@ def run_campaign(
         round_log_filenames.append(
             _write_round_log(
                 campaign_id=campaign_id,
+                started_at=campaign_started_at,
+                goal_id=goal.goal_id,
                 attack_round=attack_round,
                 log_dir=selected_log_dir,
             )
@@ -500,6 +550,8 @@ def run_campaign(
 
     summary["summary_log_filename"] = _write_campaign_log(
         campaign_id=campaign_id,
+        started_at=campaign_started_at,
+        goal_id=goal.goal_id,
         summary=summary,
         log_dir=selected_log_dir,
     )

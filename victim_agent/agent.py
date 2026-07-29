@@ -46,6 +46,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import socket
 import sys
 import urllib.error
@@ -2317,6 +2318,34 @@ def _extract_tool_failure_reason(
 # ---------------------------------------------------------------------------
 
 
+def _filename_timestamp(iso_timestamp: str) -> str:
+    """Convert an ISO-8601 UTC timestamp into a compact, sortable prefix."""
+
+    try:
+        parsed = datetime.fromisoformat(iso_timestamp)
+    except (TypeError, ValueError):
+        parsed = datetime.now(timezone.utc)
+
+    return parsed.strftime("%Y%m%d-%H%M%S")
+
+
+def _sanitize_for_filename(value: str) -> str:
+    """Strip characters that are unsafe or noisy in filenames."""
+
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    return cleaned.strip("-") or "unknown"
+
+
+def _run_log_filename(result: dict[str, Any]) -> str:
+    """Build a human-sortable log filename: timestamp_ticket_shortid.json."""
+
+    timestamp = _filename_timestamp(result.get("started_at", ""))
+    ticket_id = _sanitize_for_filename(str(result.get("ticket_id") or "no-ticket"))
+    short_run_id = str(result["run_id"])[:8]
+
+    return f"{timestamp}_{ticket_id}_{short_run_id}.json"
+
+
 def _write_run_log(
     result: dict[str, Any],
     *,
@@ -2344,7 +2373,7 @@ def _write_run_log(
             exist_ok=True,
         )
 
-        filename = f"{result['run_id']}.json"
+        filename = _run_log_filename(result)
         target_path = log_dir / filename
 
         temporary_path = log_dir / (
