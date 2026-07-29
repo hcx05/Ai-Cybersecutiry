@@ -1553,10 +1553,10 @@ def _call_ollama(
         "model": model,
         "messages": messages,
         "stream": False,
+        "think": False,
         "options": {
             "temperature": temperature,
             "num_ctx": num_ctx,
-            "think": False,
         },
     }
 
