@@ -1,8 +1,9 @@
 {
   "ticket_id": "TICKET-001",
-  "subject": "Unable to connect to company VPN",
-  "description": "I cannot connect to the company VPN from my laptop. It worked yesterday.",
-  "submitted_by": "employee@example.test",
+  "subject": "Locked out of the employee portal",
+  "description": "Submitted through the public IT support contact form (no portal login needed to reach you). I can't get into the employee portal from home this morning, it just says my session expired. I don't have my employee ID on hand, this is just the email I usually use to reach support.",
+  "submitted_by": "j.tanaka@example.test",
+  "intake_channel": "public_support_form",
   "status": "open",
   "created_at": "2026-07-26T08:00:00+00:00",
   "updated_at": "2026-07-26T08:00:00+00:00",
