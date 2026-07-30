@@ -52,6 +52,7 @@ from victim_agent.tools.knowledge_base import (
 )
 from victim_agent.tools.ticket import (
     INBOX_DIR as DEFAULT_RUNTIME_INBOX_DIR,
+    TICKET_ID_PATTERN,
 )
 
 
@@ -210,6 +211,130 @@ def _copy_baseline_directory(
         copied.append(entry.name)
 
     return copied
+
+
+def _validate_ticket_id_for_restore(ticket_id: str) -> str:
+    """
+    Validate a ticket ID before using it to build a filesystem path.
+
+    Mirrors victim_agent.tools.ticket's own TICKET_ID_PATTERN so a ticket
+    ID this function will accept is always one the Victim Agent's own
+    tools could also have produced.
+    """
+
+    if not isinstance(ticket_id, str):
+        raise ResetEnvironmentError("Ticket ID must be a string.")
+
+    normalized = ticket_id.strip()
+
+    if not TICKET_ID_PATTERN.fullmatch(normalized):
+        raise ResetEnvironmentError(
+            f"Ticket ID contains unsupported characters: {ticket_id!r}"
+        )
+
+    return normalized
+
+
+def _resolve_single_file(
+    directory: Path,
+    filename: str,
+    *,
+    label: str,
+) -> Path:
+    """
+    Resolve one file inside a directory and confirm it stays inside that
+    directory's boundary, as defense in depth on top of
+    _validate_ticket_id_for_restore.
+    """
+
+    resolved = (directory / filename).resolve(strict=False)
+
+    try:
+        resolved.relative_to(directory)
+    except ValueError as exc:
+        raise ResetEnvironmentError(
+            f"{label} path violates the directory safety boundary: "
+            f"{filename}"
+        ) from exc
+
+    return resolved
+
+
+def restore_ticket_from_baseline(
+    ticket_id: str,
+    *,
+    baseline_tickets_dir: Path | str | None = None,
+    runtime_inbox_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """
+    Restore a single ticket to its committed baseline content.
+
+    Copies only data/baseline/tickets/<ticket_id>.json over
+    data/runtime/inbox/<ticket_id>.json, leaving every other runtime
+    ticket and the knowledge base untouched. This is the per-round
+    counterpart to reset_environment(): intended to run immediately
+    before each round's payload is delivered in
+    attack_agent.agent.run_campaign(), so a round's ticket always starts
+    from the same clean baseline regardless of what a previous round's
+    payload delivery or Victim Agent tool calls left behind, while
+    round_history passed to the planner keeps the full campaign record
+    in memory unaffected.
+    """
+
+    normalized_id = _validate_ticket_id_for_restore(ticket_id)
+
+    baseline_tickets = _resolve_baseline_directory(
+        Path(baseline_tickets_dir)
+        if baseline_tickets_dir is not None
+        else DEFAULT_BASELINE_TICKETS_DIR,
+        label="Baseline tickets",
+    )
+    runtime_inbox = _resolve_runtime_directory(
+        Path(runtime_inbox_dir)
+        if runtime_inbox_dir is not None
+        else DEFAULT_RUNTIME_INBOX_DIR,
+        label="Runtime inbox",
+    )
+
+    _reject_matching_directories(
+        baseline_tickets,
+        runtime_inbox,
+        label="Tickets",
+    )
+
+    filename = f"{normalized_id}{JSON_SUFFIX}"
+
+    baseline_path = _resolve_single_file(
+        baseline_tickets,
+        filename,
+        label="Baseline ticket",
+    )
+
+    if not baseline_path.is_file():
+        raise ResetEnvironmentError(
+            f"No baseline ticket found for: {normalized_id}"
+        )
+
+    runtime_path = _resolve_single_file(
+        runtime_inbox,
+        filename,
+        label="Runtime ticket",
+    )
+
+    try:
+        content = baseline_path.read_bytes()
+        runtime_path.write_bytes(content)
+    except OSError as exc:
+        raise ResetEnvironmentError(
+            f"Could not restore baseline ticket: {normalized_id}"
+        ) from exc
+
+    return {
+        "status": "success",
+        "ticket_id": normalized_id,
+        "baseline_path": str(baseline_path),
+        "runtime_path": str(runtime_path),
+    }
 
 
 def reset_environment(

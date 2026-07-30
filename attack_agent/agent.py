@@ -8,16 +8,26 @@ round:
        round should attempt (attack_agent/planner.py).
     2. If continuing, the payload generator writes the injection text
        (attack_agent/payload_generator.py).
-    3. The payload is delivered directly into the goal's target channel
+    3. The campaign's ticket is restored to its baseline content
+       (controller.reset_environment.restore_ticket_from_baseline()),
+       regardless of target_channel, so this round's delivery never lands
+       on top of notes, status changes, or a resolved/in-progress state
+       left by a previous round or by the Victim Agent's own update_ticket
+       calls.
+    4. The payload is delivered directly into the goal's target channel
        (a ticket file or a knowledge-base article file).
-    4. victim_agent.agent.run_victim_agent() is invoked against the
+    5. victim_agent.agent.run_victim_agent() is invoked against the
        ticket.
-    5. The result is analyzed (attack_agent/analyzer.py) and fed back into
+    6. The result is analyzed (attack_agent/analyzer.py) and fed back into
        the next planner call.
 
 This is what makes the campaign autonomous round to round: nothing here
 requires a human to read one round's result and manually decide or start
-the next round.
+the next round. The planner still sees the full campaign history through
+round_history/latest_signal (kept in memory as history: list[AttackRound]);
+only the on-disk ticket content is reset each round, so a later round's
+success or failure can be attributed to that round's strategy rather than
+to accumulated leftover content.
 
 victim_agent is only ever imported for run_victim_agent() itself and the
 runtime directory constants; nothing here modifies victim_agent's
@@ -26,7 +36,8 @@ victim_agent's own restricted tools on purpose: it plays the role of the
 environment/adversary (a compromised ticketing system, or an already
 approved-but-malicious knowledge-base article), not the Victim Agent
 itself. controller/reset_environment.py exists to put those same files
-back to a known baseline before or after a campaign.
+back to a known baseline before or after a campaign, and to restore one
+ticket back to baseline between rounds within a campaign.
 
 Typical use, one campaign against a fresh ticket:
 
@@ -71,6 +82,11 @@ from typing import Any
 from victim_agent.agent import run_victim_agent
 from victim_agent.tools.knowledge_base import KNOWLEDGE_BASE_DIR
 from victim_agent.tools.ticket import INBOX_DIR
+
+from controller.reset_environment import (
+    ResetEnvironmentError,
+    restore_ticket_from_baseline,
+)
 
 from attack_agent.analyzer import extract_round_signal
 from attack_agent.payload_generator import (
@@ -500,6 +516,12 @@ def run_campaign(
 
         except SchemaValidationError as exc:
             stopped_reason = f"payload_validation_error: {exc}"
+            break
+
+        try:
+            restore_ticket_from_baseline(ticket_id)
+        except ResetEnvironmentError as exc:
+            stopped_reason = f"ticket_restore_error: {exc}"
             break
 
         if payload.target_channel in KNOWLEDGE_BASE_CHANNELS:
