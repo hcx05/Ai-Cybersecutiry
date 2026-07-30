@@ -1,9 +1,9 @@
 # Ai-Cybersecutiry
 
 研究一個由 LLM 驅動的 IT 客服 Agent(Victim Agent),在面對間接提示注入
-(Indirect Prompt Injection, IPI)時的抵抗力,並用一個自動化的攻擊代理
-(Attack Agent)產生攻擊、觀察回應、自主調整下一輪策略,測試能否串出一條
-有真實後果的完整攻擊鏈。
+(Indirect Prompt Injection, IPI)與資料投毒攻擊(Data Attack,例如污染知識庫
+文章)時的抵抗力,並用一個自動化的攻擊代理(Attack Agent)產生攻擊、觀察回應、
+自主調整下一輪策略,測試能否串出一條有真實後果的完整攻擊鏈。
 
 ---
 
