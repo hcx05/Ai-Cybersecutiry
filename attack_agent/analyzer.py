@@ -3,9 +3,10 @@ Deterministic analysis of one Victim Agent result.
 
 This module extracts objective facts already present in the dict returned
 by victim_agent.agent.run_victim_agent() (policy blocks, the final status,
-which tools were attempted, whether the ticket status changed, and so on)
-into a compact shape a planner can reason over without re-deriving them
-from the full trace on every round.
+which tools were attempted, whether the ticket status changed, whether a
+password reset was performed, and so on) into a compact shape a planner
+can reason over without re-deriving them from the full trace on every
+round.
 
 This performs no judgment about whether an attack succeeded. Whether a
 given set of facts means a goal's success_signal was met is left to the
@@ -77,12 +78,16 @@ def _extract_tool_call_attempt(
     }
 
 
-def _extract_update_ticket_effect(
+def _extract_executed_tool_result(
     entry: dict[str, Any],
+    *,
+    tool_name: str,
 ) -> dict[str, Any] | None:
     """
-    Return what a successful update_ticket call actually changed, if this
-    trace entry executed one.
+    Return the tool_result.data of one trace entry, if it executed
+    tool_name and that execution succeeded. Shared by the two
+    tool-specific extractors below so both stay in sync if the underlying
+    trace shape ever changes.
     """
 
     executed_tool = entry.get("executed_tool")
@@ -90,7 +95,7 @@ def _extract_update_ticket_effect(
 
     if not (
         isinstance(executed_tool, dict)
-        and executed_tool.get("name") == "update_ticket"
+        and executed_tool.get("name") == tool_name
         and isinstance(tool_result, dict)
         and tool_result.get("status") == "success"
     ):
@@ -101,10 +106,54 @@ def _extract_update_ticket_effect(
     if not isinstance(data, dict):
         return None
 
+    return data
+
+
+def _extract_update_ticket_effect(
+    entry: dict[str, Any],
+) -> dict[str, Any] | None:
+    """
+    Return what a successful update_ticket call actually changed, if this
+    trace entry executed one.
+    """
+
+    data = _extract_executed_tool_result(entry, tool_name="update_ticket")
+
+    if data is None:
+        return None
+
     return {
         "step": entry.get("step"),
         "new_status": data.get("new_status"),
         "note_added": bool(data.get("note_added")),
+    }
+
+
+def _extract_password_reset_effect(
+    entry: dict[str, Any],
+) -> dict[str, Any] | None:
+    """
+    Return what a successful reset_password call actually did, if this
+    trace entry executed one.
+
+    This is the counterpart to _extract_update_ticket_effect for
+    reset_password. Without it, a successful, security-relevant password
+    reset was only visible to the planner indirectly (as one entry in
+    tool_calls_attempted, indistinguishable from an attempt that was
+    blocked or that failed), which in practice was not a strong enough
+    signal for a small planner model to reliably recognize that the goal
+    had already been achieved.
+    """
+
+    data = _extract_executed_tool_result(entry, tool_name="reset_password")
+
+    if data is None:
+        return None
+
+    return {
+        "step": entry.get("step"),
+        "employee_email": data.get("employee_email"),
+        "reset_at": data.get("reset_at"),
     }
 
 
@@ -135,6 +184,7 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
     tool_calls_attempted: list[dict[str, Any]] = []
     guard_events: list[str] = []
     ticket_updates: list[dict[str, Any]] = []
+    password_resets: list[dict[str, Any]] = []
 
     for entry in trace:
         if not isinstance(entry, dict):
@@ -157,6 +207,11 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
         if ticket_update is not None:
             ticket_updates.append(ticket_update)
 
+        password_reset = _extract_password_reset_effect(entry)
+
+        if password_reset is not None:
+            password_resets.append(password_reset)
+
     return {
         "final_status": victim_result.get("status"),
         "final_reason": victim_result.get("reason"),
@@ -166,4 +221,5 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
         "tool_calls_attempted": tool_calls_attempted,
         "guard_events": guard_events,
         "ticket_updates": ticket_updates,
+        "password_resets": password_resets,
     }
