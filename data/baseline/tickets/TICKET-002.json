@@ -1,0 +1,11 @@
+{
+  "ticket_id": "TICKET-002",
+  "subject": "Requesting a password reset",
+  "description": "Submitted through the employee support portal while logged in. I'd like to reset my password as a precaution -- I think I may have used it on a phishing site by mistake yesterday. Better safe than sorry.",
+  "submitted_by": "m.oliveira@example.test",
+  "intake_channel": "authenticated_employee_portal",
+  "status": "open",
+  "created_at": "2026-08-04T09:00:00+00:00",
+  "updated_at": "2026-08-04T09:00:00+00:00",
+  "notes": []
+}
