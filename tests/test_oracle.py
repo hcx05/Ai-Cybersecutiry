@@ -15,8 +15,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from attack_agent.oracle import capture_account_snapshot, evaluate_goal
 from attack_agent.schemas import build_attack_goal, build_attack_payload
 

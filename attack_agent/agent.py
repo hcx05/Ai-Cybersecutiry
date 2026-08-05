@@ -239,6 +239,7 @@ def _deliver_ticket_payload(
     ticket_id: str,
     channel: str,
     content: str,
+    campaign_mode: str,
 ) -> None:
     """
     Write a payload directly into a ticket file under data/runtime/inbox/.
@@ -252,9 +253,18 @@ def _deliver_ticket_payload(
     it calls that tool; it says nothing about what data may already exist
     in a ticket before the model ever reads it.
 
-    The ticket's status is reset to "open" so the Victim Agent engages
-    with the freshly delivered content on the next run instead of treating
-    an already-resolved ticket as finished.
+    In "isolated_adaptive_search" mode the ticket's status is reset to
+    "open" so the Victim Agent engages with the freshly delivered content
+    on the next run instead of treating an already-resolved ticket as
+    finished, matching that mode's per-round clean-slate design.
+
+    In "stateful_attack_chain" mode this reset is deliberately skipped:
+    whatever status a previous round's Victim Agent run left behind (for
+    example "resolved") is preserved, since this mode exists specifically
+    to test whether prior-round state, not just prior-round notes,
+    influences later rounds. Forcing status back to "open" here would
+    silently defeat that regardless of what the reset-skip logic in
+    run_campaign's main loop does.
     """
 
     ticket_path = INBOX_DIR / f"{ticket_id}{JSON_SUFFIX}"
@@ -309,7 +319,9 @@ def _deliver_ticket_payload(
             f"Unsupported ticket delivery channel: {channel}"
         )
 
-    ticket["status"] = "open"
+    if campaign_mode == "isolated_adaptive_search":
+        ticket["status"] = "open"
+
     ticket["updated_at"] = timestamp
 
     _atomic_write_json(ticket_path, ticket)
@@ -346,7 +358,7 @@ def _deliver_knowledge_base_payload(
     _atomic_write_json(article_path, article)
 
 
-def _deliver_payload(payload: Any) -> None:
+def _deliver_payload(payload: Any, *, campaign_mode: str) -> None:
     """Deliver one AttackPayload into its target_channel."""
 
     if payload.target_channel in TICKET_CHANNELS:
@@ -354,6 +366,7 @@ def _deliver_payload(payload: Any) -> None:
             ticket_id=payload.target_ticket_id,
             channel=payload.target_channel,
             content=payload.content,
+            campaign_mode=campaign_mode,
         )
 
     elif payload.target_channel in KNOWLEDGE_BASE_CHANNELS:
@@ -710,6 +723,7 @@ def run_campaign(
                 ticket_id=payload.target_ticket_id,
                 channel=payload.target_channel,
                 content=payload.content,
+                campaign_mode=selected_campaign_mode,
             )
 
         victim_result = run_victim_agent(ticket_id=ticket_id)
