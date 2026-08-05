@@ -66,6 +66,7 @@ DEFAULT_ALLOWED_OLLAMA_PORTS = {
 }
 
 MAX_MODEL_RESPONSE_BYTES = 1_000_000
+MAX_METADATA_RESPONSE_BYTES = 2_000_000
 MAX_HTTP_ERROR_CHARACTERS = 2_000
 
 
@@ -409,6 +410,110 @@ def request_ollama_json(
     return response_object
 
 
+# Model-identity metadata (digest, resolved name) is collected once per
+# process for each exact (base_url, model) pair, mirroring
+# victim_agent/agent.py's own _OLLAMA_METADATA_CACHE. Kept independent
+# from that module on purpose (see this module's docstring): duplicated,
+# not imported, so attack_agent never depends on victim_agent's internals.
+_MODEL_METADATA_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def _find_model_tag_entry(
+    *,
+    models: Any,
+    requested_model: str,
+) -> dict[str, Any] | None:
+    """Find a model entry returned by Ollama's /api/tags."""
+
+    if not isinstance(models, list):
+        return None
+
+    accepted_names = {requested_model}
+
+    if ":" not in requested_model:
+        accepted_names.add(f"{requested_model}:latest")
+
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+
+        names = {
+            value
+            for value in (item.get("name"), item.get("model"))
+            if isinstance(value, str)
+        }
+
+        if names & accepted_names:
+            return item
+
+    return None
+
+
+def _collect_model_identity_metadata(
+    *,
+    base_url: str,
+    model: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    """
+    Collect model-identity reproducibility metadata (digest, resolved
+    name) without making the planner/payload-generator call depend on it:
+    a failure here is recorded, never raised.
+    """
+
+    cache_key = (base_url, model)
+    cached = _MODEL_METADATA_CACHE.get(cache_key)
+
+    if cached is not None:
+        return dict(cached)
+
+    metadata: dict[str, Any] = {
+        "requested_name": model,
+        "resolved_name": None,
+        "digest": None,
+        "collection_error": None,
+    }
+
+    try:
+        tags_response = request_ollama_json(
+            endpoint=f"{base_url.rstrip('/')}/api/tags",
+            method="GET",
+            timeout_seconds=min(timeout_seconds, 10.0),
+            max_response_bytes=MAX_METADATA_RESPONSE_BYTES,
+        )
+
+        model_entry = _find_model_tag_entry(
+            models=tags_response.get("models"),
+            requested_model=model,
+        )
+
+        if model_entry is None:
+            metadata["collection_error"] = (
+                "The requested model was not found in the local Ollama "
+                "model list."
+            )
+        else:
+            resolved_name = model_entry.get("name")
+
+            if not isinstance(resolved_name, str):
+                resolved_name = model_entry.get("model")
+
+            if isinstance(resolved_name, str):
+                metadata["resolved_name"] = resolved_name
+
+            digest = model_entry.get("digest")
+
+            if isinstance(digest, str):
+                metadata["digest"] = digest
+
+    except AttackModelError as exc:
+        metadata["collection_error"] = str(exc)
+
+    _MODEL_METADATA_CACHE[cache_key] = dict(metadata)
+
+    return metadata
+
+
 def call_ollama_chat(
     *,
     messages: list[dict[str, str]],
@@ -419,10 +524,26 @@ def call_ollama_chat(
     num_ctx: int,
     timeout_seconds: float,
     json_schema: dict[str, Any] | None = None,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """
-    Request one chat completion from an Ollama model and return its raw
-    text content.
+    Request one chat completion from an Ollama model and return
+    (content, metadata).
+
+    metadata carries reproducibility information mirroring what
+    victim_agent/agent.py already records for the Victim Agent's own
+    model calls -- sampling parameters, the model's resolved name and
+    digest, and Ollama's own response timing/token counters -- so a
+    planner or payload-generator model change can be attributed to a
+    specific model build, not just a name string:
+
+        {
+            "model": {"requested_name": ..., "resolved_name": ...,
+                       "digest": ..., "collection_error": ... | None},
+            "sampling_parameters": {"temperature": ..., "num_ctx": ...,
+                                      "structured_mode": ...},
+            "response_metrics": {"created_at": ..., "done_reason": ...,
+                                   "total_duration": ..., ...},
+        }
 
     structured_mode:
 
@@ -492,4 +613,39 @@ def call_ollama_chat(
             "Ollama returned an empty model message."
         )
 
-    return content
+    response_metric_names = {
+        "model",
+        "created_at",
+        "done",
+        "done_reason",
+        "total_duration",
+        "load_duration",
+        "prompt_eval_count",
+        "prompt_eval_duration",
+        "eval_count",
+        "eval_duration",
+    }
+
+    response_metrics = {
+        key: response_object[key]
+        for key in response_metric_names
+        if key in response_object
+    }
+
+    model_identity_metadata = _collect_model_identity_metadata(
+        base_url=base_url,
+        model=model,
+        timeout_seconds=timeout_seconds,
+    )
+
+    metadata: dict[str, Any] = {
+        "model": model_identity_metadata,
+        "sampling_parameters": {
+            "temperature": temperature,
+            "num_ctx": num_ctx,
+            "structured_mode": structured_mode,
+        },
+        "response_metrics": response_metrics,
+    }
+
+    return content.strip(), metadata

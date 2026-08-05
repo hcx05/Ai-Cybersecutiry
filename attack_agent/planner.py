@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from attack_agent.analyzer import extract_round_signal
 from attack_agent.ollama_client import (
     AttackModelError,
     call_ollama_chat,
@@ -100,6 +101,48 @@ def _summarize_round_for_prompt(
     }
 
 
+def _build_full_history_summary(
+    history: list[AttackRound],
+) -> dict[str, Any]:
+    """
+    Build a compact summary spanning the campaign's *entire* history, not
+    just the MAX_HISTORY_ROUNDS_IN_PROMPT most recent rounds.
+
+    round_history (see plan_next_round) is deliberately truncated to keep
+    the prompt size predictable, but that truncation had a side effect on
+    long campaigns: once a round fell out of the window, the planner
+    could no longer see that its strategy_label or the rule_id that
+    blocked it had already been tried, and would sometimes retry a
+    technique that failed many rounds earlier without knowing it. This
+    summary never grows with the raw content of old rounds (only labels
+    and rule IDs), so it stays cheap to include on every call regardless
+    of campaign length.
+    """
+
+    all_strategy_labels_tried: list[str] = []
+    failed_rule_ids_seen: list[str] = []
+
+    for attack_round in history:
+        label = attack_round.payload.strategy_label
+
+        if label not in all_strategy_labels_tried:
+            all_strategy_labels_tried.append(label)
+
+        signal = extract_round_signal(attack_round.victim_result)
+
+        for block in signal.get("policy_blocks", []):
+            rule_id = block.get("rule_id")
+
+            if isinstance(rule_id, str) and rule_id not in failed_rule_ids_seen:
+                failed_rule_ids_seen.append(rule_id)
+
+    return {
+        "rounds_attempted": len(history),
+        "all_strategy_labels_tried": all_strategy_labels_tried,
+        "failed_rule_ids_seen": failed_rule_ids_seen,
+    }
+
+
 def _parse_planner_response(raw_content: str) -> PlannerDecision:
     """Parse and validate the planner model's raw text response."""
 
@@ -139,13 +182,28 @@ def plan_next_round(
     temperature: float | None = None,
     num_ctx: int | None = None,
     timeout_seconds: float | None = None,
-) -> PlannerDecision:
+) -> tuple[PlannerDecision, dict[str, Any]]:
     """
     Ask the planner model for the next PlannerDecision.
 
+    Returns (decision, metadata). metadata is the reproducibility record
+    from attack_agent.ollama_client.call_ollama_chat() (model digest,
+    sampling parameters, response timing) for this specific call.
+
     latest_signal is normally the dict returned by
-    attack_agent.analyzer.extract_round_signal() for history[-1], or None
-    for the opening decision on round 1, when there is no previous round.
+    attack_agent.analyzer.extract_round_signal() for history[-1] (or a
+    version of it already reduced by
+    attack_agent.analyzer.filter_signal_for_observability() for the
+    campaign's observability_mode), or None for the opening decision on
+    round 1, when there is no previous round.
+
+    In addition to the truncated round_history window (the
+    MAX_HISTORY_ROUNDS_IN_PROMPT most recent rounds, each with a content
+    preview), the prompt also includes full_history_summary: strategy
+    labels and policy rule_ids seen across the *entire* campaign so far,
+    not just the recent window, so a long campaign's planner does not
+    retry a technique that failed many rounds earlier simply because that
+    round has scrolled out of view.
     """
 
     selected_model = model if model is not None else os.getenv(MODEL_ENV)
@@ -195,6 +253,7 @@ def plan_next_round(
             _summarize_round_for_prompt(attack_round)
             for attack_round in history[-MAX_HISTORY_ROUNDS_IN_PROMPT:]
         ],
+        "full_history_summary": _build_full_history_summary(history),
         "latest_signal": latest_signal,
     }
 
@@ -207,7 +266,7 @@ def plan_next_round(
     ]
 
     try:
-        raw_content = call_ollama_chat(
+        raw_content, metadata = call_ollama_chat(
             messages=messages,
             model=selected_model,
             base_url=selected_base_url,
@@ -219,4 +278,4 @@ def plan_next_round(
     except AttackModelError as exc:
         raise PlannerError(f"Planner model call failed: {exc}") from exc
 
-    return _parse_planner_response(raw_content)
+    return _parse_planner_response(raw_content), metadata

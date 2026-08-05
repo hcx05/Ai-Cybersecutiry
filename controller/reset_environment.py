@@ -33,14 +33,26 @@ Typical use, from controller/run_experiment.py, before every case:
 Or from the command line:
 
     python3 -m controller.reset_environment
+
+reset_environment() has always been correct, but nothing ever forced it
+to run: a human had to remember to call it (or run the command above)
+before a campaign. attack_agent.agent.run_campaign() now calls
+audited_reset_environment() automatically at the start of every campaign
+(auto_reset=True by default) instead of trusting that a prior manual
+reset happened -- it hashes data/baseline/, resets, then re-hashes
+data/runtime/ and raises ResetEnvironmentError if the two do not match,
+so a campaign's environment cleanliness is asserted and recorded rather
+than assumed.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -337,6 +349,66 @@ def restore_ticket_from_baseline(
     }
 
 
+def clear_account_reset_log(
+    ticket_id: str,
+    *,
+    runtime_accounts_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """
+    Remove one ticket's data/runtime/accounts/<ticket_id>.json record, if
+    present.
+
+    victim_agent/tools/account.py writes at most one file per ticket_id,
+    overwritten on every reset_password call, so within a single Attack
+    Agent campaign against a fixed ticket_id every round's reset would
+    otherwise land on the exact same path. Without clearing it between
+    rounds, a success on an earlier round stays on disk indefinitely and
+    a later round's attack_agent.oracle.evaluate_goal() would have no
+    reliable way to tell "this round produced a reset" from "an earlier
+    round already did." Intended to run immediately before each round's
+    payload is delivered in attack_agent.agent.run_campaign(), the same
+    place restore_ticket_from_baseline() already runs, so both pieces of
+    per-round runtime state are put back to a known-empty state together.
+
+    There is no baseline counterpart to restore from (mirrors
+    reset_environment()'s handling of the accounts directory): the only
+    valid pre-round state for this file is "does not exist."
+    """
+
+    normalized_id = _validate_ticket_id_for_restore(ticket_id)
+
+    runtime_accounts = _resolve_runtime_directory(
+        Path(runtime_accounts_dir)
+        if runtime_accounts_dir is not None
+        else DEFAULT_RUNTIME_ACCOUNTS_DIR,
+        label="Runtime accounts",
+    )
+
+    record_path = _resolve_single_file(
+        runtime_accounts,
+        f"{normalized_id}{JSON_SUFFIX}",
+        label="Runtime account-reset log",
+    )
+
+    removed = False
+
+    if record_path.is_file():
+        try:
+            record_path.unlink()
+            removed = True
+        except OSError as exc:
+            raise ResetEnvironmentError(
+                f"Could not clear account-reset log for: {normalized_id}"
+            ) from exc
+
+    return {
+        "status": "success",
+        "ticket_id": normalized_id,
+        "runtime_path": str(record_path),
+        "removed": removed,
+    }
+
+
 def reset_environment(
     *,
     baseline_tickets_dir: Path | str | None = None,
@@ -443,6 +515,231 @@ def reset_environment(
     }
 
 
+# ---------------------------------------------------------------------------
+# Auditable auto-reset: baseline hashing and post-reset verification
+# ---------------------------------------------------------------------------
+#
+# reset_environment() above has always been correct, but nothing forced it
+# to actually run before a campaign: attack_agent.agent.run_campaign()
+# only ever restored the one ticket it was pointed at
+# (restore_ticket_from_baseline), and a human had to remember to run
+# `python3 -m controller.reset_environment` first. A stray leftover
+# knowledge-base article from an earlier, unrelated campaign, or a
+# runtime directory that silently drifted from data/baseline/, could
+# contaminate a result without leaving any record that it happened.
+#
+# audited_reset_environment() makes environment cleanliness something a
+# campaign asserts about itself rather than something the operator is
+# trusted to have done: it hashes data/baseline/ before resetting,
+# performs the reset, then re-hashes data/runtime/ and fails loudly
+# (ResetEnvironmentError) if the two do not match exactly. The full
+# before/after manifest is returned so it can be stored alongside a
+# campaign's own logs as an audit trail.
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of one file's raw bytes."""
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _directory_manifest(directory: Path) -> dict[str, str]:
+    """
+    Build a {filename: sha256} manifest of every *.json file directly
+    inside directory, in stable sorted-filename order.
+    """
+
+    manifest: dict[str, str] = {}
+
+    try:
+        entries = sorted(directory.iterdir())
+    except OSError as exc:
+        raise ResetEnvironmentError(
+            f"Could not list directory for hashing: {directory}"
+        ) from exc
+
+    for entry in entries:
+        if entry.is_file() and entry.suffix == JSON_SUFFIX:
+            try:
+                manifest[entry.name] = _sha256_file(entry)
+            except OSError as exc:
+                raise ResetEnvironmentError(
+                    f"Could not hash file: {entry}"
+                ) from exc
+
+    return manifest
+
+
+def _combined_manifest_digest(manifest: dict[str, str]) -> str:
+    """
+    Collapse a {filename: sha256} manifest into one order-independent
+    digest, so two directories with the same file contents under the same
+    names hash identically regardless of filesystem iteration order.
+    """
+
+    canonical = json.dumps(manifest, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def build_baseline_manifest(
+    *,
+    baseline_tickets_dir: Path | str | None = None,
+    baseline_knowledge_base_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """
+    Hash every committed baseline file, so a caller can later confirm
+    data/runtime/ actually matches what is checked into data/baseline/ --
+    not just that *a* reset ran, but that it produced exactly the
+    expected content.
+    """
+
+    baseline_tickets = _resolve_baseline_directory(
+        Path(baseline_tickets_dir)
+        if baseline_tickets_dir is not None
+        else DEFAULT_BASELINE_TICKETS_DIR,
+        label="Baseline tickets",
+    )
+    baseline_knowledge_base = _resolve_baseline_directory(
+        Path(baseline_knowledge_base_dir)
+        if baseline_knowledge_base_dir is not None
+        else DEFAULT_BASELINE_KNOWLEDGE_BASE_DIR,
+        label="Baseline knowledge base",
+    )
+
+    tickets_manifest = _directory_manifest(baseline_tickets)
+    knowledge_base_manifest = _directory_manifest(baseline_knowledge_base)
+
+    return {
+        "tickets": tickets_manifest,
+        "knowledge_base": knowledge_base_manifest,
+        "tickets_digest": _combined_manifest_digest(tickets_manifest),
+        "knowledge_base_digest": _combined_manifest_digest(
+            knowledge_base_manifest
+        ),
+    }
+
+
+def verify_runtime_matches_baseline(
+    baseline_manifest: dict[str, Any],
+    *,
+    runtime_inbox_dir: Path | str | None = None,
+    runtime_knowledge_base_dir: Path | str | None = None,
+    runtime_accounts_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """
+    Confirm data/runtime/ exactly matches a previously built baseline
+    manifest (see build_baseline_manifest()), and that the account-reset
+    log is empty.
+
+    Returns a structured report; never raises for a mismatch (the caller
+    decides how to treat "matches": False -- audited_reset_environment()
+    treats it as fatal, but a caller inspecting an already-running
+    environment might just want the report).
+    """
+
+    runtime_inbox = _resolve_runtime_directory(
+        Path(runtime_inbox_dir)
+        if runtime_inbox_dir is not None
+        else DEFAULT_RUNTIME_INBOX_DIR,
+        label="Runtime inbox",
+    )
+    runtime_knowledge_base = _resolve_runtime_directory(
+        Path(runtime_knowledge_base_dir)
+        if runtime_knowledge_base_dir is not None
+        else DEFAULT_RUNTIME_KNOWLEDGE_BASE_DIR,
+        label="Runtime knowledge base",
+    )
+    runtime_accounts = _resolve_runtime_directory(
+        Path(runtime_accounts_dir)
+        if runtime_accounts_dir is not None
+        else DEFAULT_RUNTIME_ACCOUNTS_DIR,
+        label="Runtime accounts",
+    )
+
+    runtime_tickets_manifest = _directory_manifest(runtime_inbox)
+    runtime_knowledge_base_manifest = _directory_manifest(
+        runtime_knowledge_base
+    )
+    runtime_accounts_manifest = _directory_manifest(runtime_accounts)
+
+    tickets_match = runtime_tickets_manifest == baseline_manifest.get(
+        "tickets"
+    )
+    knowledge_base_match = (
+        runtime_knowledge_base_manifest
+        == baseline_manifest.get("knowledge_base")
+    )
+    accounts_empty = runtime_accounts_manifest == {}
+
+    return {
+        "matches": tickets_match and knowledge_base_match and accounts_empty,
+        "tickets_match": tickets_match,
+        "knowledge_base_match": knowledge_base_match,
+        "accounts_empty": accounts_empty,
+        "runtime_tickets_digest": _combined_manifest_digest(
+            runtime_tickets_manifest
+        ),
+        "runtime_knowledge_base_digest": _combined_manifest_digest(
+            runtime_knowledge_base_manifest
+        ),
+    }
+
+
+def audited_reset_environment(**kwargs: Any) -> dict[str, Any]:
+    """
+    Run reset_environment() and prove it worked, instead of trusting that
+    it was called at all.
+
+    Accepts the same keyword arguments as reset_environment() (baseline
+    and runtime directory overrides). Raises ResetEnvironmentError if,
+    immediately after the reset, data/runtime/ does not hash identically
+    to data/baseline/, or the account-reset log is not empty -- this
+    should only ever happen from a filesystem race or a misconfigured
+    directory, both of which deserve a loud failure rather than a
+    campaign silently running against contaminated state.
+
+    Returns reset_environment()'s own result plus:
+
+        {
+            ...,
+            "audited_at": "<ISO-8601 timestamp>",
+            "baseline_manifest": {...},
+            "verification": {...},  # verify_runtime_matches_baseline()'s report
+        }
+    """
+
+    baseline_manifest = build_baseline_manifest(
+        baseline_tickets_dir=kwargs.get("baseline_tickets_dir"),
+        baseline_knowledge_base_dir=kwargs.get(
+            "baseline_knowledge_base_dir"
+        ),
+    )
+
+    reset_result = reset_environment(**kwargs)
+
+    verification = verify_runtime_matches_baseline(
+        baseline_manifest,
+        runtime_inbox_dir=kwargs.get("runtime_inbox_dir"),
+        runtime_knowledge_base_dir=kwargs.get(
+            "runtime_knowledge_base_dir"
+        ),
+        runtime_accounts_dir=kwargs.get("runtime_accounts_dir"),
+    )
+
+    if not verification["matches"]:
+        raise ResetEnvironmentError(
+            "Environment reset audit failed: data/runtime/ does not "
+            f"match data/baseline/ after reset_environment(): {verification}"
+        )
+
+    reset_result = dict(reset_result)
+    reset_result["audited_at"] = datetime.now(timezone.utc).isoformat()
+    reset_result["baseline_manifest"] = baseline_manifest
+    reset_result["verification"] = verification
+
+    return reset_result
+
+
 def _build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser for standalone use."""
 
@@ -478,6 +775,15 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the runtime account-reset log directory.",
     )
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help=(
+            "Use audited_reset_environment(): hash data/baseline/ first, "
+            "reset, then verify data/runtime/ matches exactly and include "
+            "the manifest/verification report in the output."
+        ),
+    )
 
     return parser
 
@@ -488,8 +794,12 @@ def main() -> int:
     parser = _build_argument_parser()
     arguments = parser.parse_args()
 
+    reset_function = (
+        audited_reset_environment if arguments.audit else reset_environment
+    )
+
     try:
-        result = reset_environment(
+        result = reset_function(
             baseline_tickets_dir=arguments.baseline_tickets_dir,
             baseline_knowledge_base_dir=(
                 arguments.baseline_knowledge_base_dir

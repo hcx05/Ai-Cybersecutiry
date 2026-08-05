@@ -140,14 +140,23 @@ def generate_payload_content(
     temperature: float | None = None,
     num_ctx: int | None = None,
     timeout_seconds: float | None = None,
-) -> tuple[str, str | None, str]:
+) -> tuple[str, str | None, str, dict[str, Any]]:
     """
     Ask the payload generator model to write the injection text for this
     round.
 
-    Returns (content, title, rationale). title is only meaningful when
-    goal.target_channel is a knowledge-base channel; it is None otherwise
-    unless the model still supplied one.
+    Returns (content, title, rationale, metadata). title is only
+    meaningful when goal.target_channel is a knowledge-base channel; it
+    is None otherwise unless the model still supplied one. metadata is
+    the reproducibility record from
+    attack_agent.ollama_client.call_ollama_chat() (model digest, sampling
+    parameters, response timing) for this specific call -- since this
+    model runs at a higher temperature than the planner (see
+    DEFAULT_TEMPERATURE above), its own sampling randomness is itself a
+    variable when comparing campaign outcomes across planner-prompt
+    versions, not only the planner's strategy logic; recording it here
+    keeps that variable visible rather than silently folded into
+    "the planner changed."
     """
 
     if decision.action != "continue":
@@ -216,7 +225,7 @@ def generate_payload_content(
     ]
 
     try:
-        raw_content = call_ollama_chat(
+        raw_content, metadata = call_ollama_chat(
             messages=messages,
             model=selected_model,
             base_url=selected_base_url,
@@ -230,4 +239,6 @@ def generate_payload_content(
             f"Payload generator model call failed: {exc}"
         ) from exc
 
-    return _parse_payload_generator_response(raw_content)
+    content, title, rationale = _parse_payload_generator_response(raw_content)
+
+    return content, title, rationale, metadata

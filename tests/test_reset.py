@@ -236,3 +236,122 @@ def test_restore_ticket_rejects_matching_baseline_and_runtime(
             baseline_tickets_dir=isolated_directories["baseline_tickets"],
             runtime_inbox_dir=isolated_directories["baseline_tickets"],
         )
+
+
+# ---------------------------------------------------------------------------
+# clear_account_reset_log
+# ---------------------------------------------------------------------------
+
+
+def test_clear_account_reset_log_removes_existing_record(
+    isolated_directories: dict[str, Path],
+) -> None:
+    runtime_accounts = isolated_directories["runtime_accounts"]
+    runtime_accounts.mkdir(parents=True)
+
+    _write_json(
+        runtime_accounts / "TICKET-001.json",
+        {"ticket_id": "TICKET-001", "employee_email": "j.tanaka@example.test"},
+    )
+
+    result = reset_environment.clear_account_reset_log(
+        "TICKET-001",
+        runtime_accounts_dir=runtime_accounts,
+    )
+
+    assert result["removed"] is True
+    assert not (runtime_accounts / "TICKET-001.json").exists()
+
+
+def test_clear_account_reset_log_no_record_is_a_no_op(
+    isolated_directories: dict[str, Path],
+) -> None:
+    runtime_accounts = isolated_directories["runtime_accounts"]
+    runtime_accounts.mkdir(parents=True)
+
+    result = reset_environment.clear_account_reset_log(
+        "TICKET-001",
+        runtime_accounts_dir=runtime_accounts,
+    )
+
+    assert result["removed"] is False
+
+
+# ---------------------------------------------------------------------------
+# audited_reset_environment / manifest hashing
+# ---------------------------------------------------------------------------
+
+
+def test_audited_reset_environment_reports_a_matching_verification(
+    isolated_directories: dict[str, Path],
+) -> None:
+    result = reset_environment.audited_reset_environment(
+        baseline_tickets_dir=isolated_directories["baseline_tickets"],
+        baseline_knowledge_base_dir=isolated_directories[
+            "baseline_knowledge_base"
+        ],
+        runtime_inbox_dir=isolated_directories["runtime_inbox"],
+        runtime_knowledge_base_dir=isolated_directories[
+            "runtime_knowledge_base"
+        ],
+        runtime_accounts_dir=isolated_directories["runtime_accounts"],
+    )
+
+    assert result["status"] == "success"
+    assert result["verification"]["matches"] is True
+    assert "tickets_digest" in result["baseline_manifest"]
+    assert "audited_at" in result
+
+
+def test_build_baseline_manifest_digest_is_stable_across_calls(
+    isolated_directories: dict[str, Path],
+) -> None:
+    first = reset_environment.build_baseline_manifest(
+        baseline_tickets_dir=isolated_directories["baseline_tickets"],
+        baseline_knowledge_base_dir=isolated_directories[
+            "baseline_knowledge_base"
+        ],
+    )
+    second = reset_environment.build_baseline_manifest(
+        baseline_tickets_dir=isolated_directories["baseline_tickets"],
+        baseline_knowledge_base_dir=isolated_directories[
+            "baseline_knowledge_base"
+        ],
+    )
+
+    assert first["tickets_digest"] == second["tickets_digest"]
+    assert first["knowledge_base_digest"] == second["knowledge_base_digest"]
+
+
+def test_verify_runtime_matches_baseline_detects_drift(
+    isolated_directories: dict[str, Path],
+) -> None:
+    baseline_manifest = reset_environment.build_baseline_manifest(
+        baseline_tickets_dir=isolated_directories["baseline_tickets"],
+        baseline_knowledge_base_dir=isolated_directories[
+            "baseline_knowledge_base"
+        ],
+    )
+
+    runtime_inbox = isolated_directories["runtime_inbox"]
+    runtime_inbox.mkdir(parents=True)
+
+    _write_json(
+        runtime_inbox / "TICKET-001.json",
+        {
+            "ticket_id": "TICKET-001",
+            "description": "Drifted away from baseline.",
+        },
+    )
+
+    report = reset_environment.verify_runtime_matches_baseline(
+        baseline_manifest,
+        runtime_inbox_dir=runtime_inbox,
+        runtime_knowledge_base_dir=isolated_directories[
+            "runtime_knowledge_base"
+        ],
+        runtime_accounts_dir=isolated_directories["runtime_accounts"],
+    )
+
+    assert report["matches"] is False
+    assert report["tickets_match"] is False

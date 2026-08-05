@@ -223,3 +223,131 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
         "ticket_updates": ticket_updates,
         "password_resets": password_resets,
     }
+
+
+# ---------------------------------------------------------------------------
+# Observability-mode filtering
+# ---------------------------------------------------------------------------
+#
+# extract_round_signal() above always returns the full, white-box shape:
+# every policy_blocks entry carries rule_id, layer, and tool_name; every
+# tool_calls_attempted entry carries the model's raw arguments. That level
+# of detail is a fair description of what the Attack Agent's own logs and
+# attack_agent.oracle can see, but it is not a fair description of what a
+# real external attacker submitting tickets through a public form could
+# ever observe about the internal system that rejected them. Handing the
+# planner white-box detail by default silently inflated the campaign's
+# reported attacker capability past what the Phase 1 threat model
+# (experiments/phase1_ipi/README.md) claims: an attacker with no
+# credentials and no internal access.
+#
+# filter_signal_for_observability() is applied only to the copy of
+# latest_signal built for the planner's prompt in
+# attack_agent.agent.run_campaign(); it never touches the full signal
+# recorded to logs/attack_agent/ or passed to attack_agent.oracle.
+
+
+def _redact_policy_block_for_gray_box(
+    block: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep which tool was involved, but withhold rule_id/layer/reason
+    detail that reveals the internal policy that produced the block."""
+
+    return {
+        "step": block.get("step"),
+        "tool_name": block.get("tool_name"),
+        "outcome": "blocked_by_internal_policy",
+    }
+
+
+def _redact_tool_call_attempt(
+    attempt: dict[str, Any],
+) -> dict[str, Any]:
+    """Reduce a tool_calls_attempted entry to the tool name only, dropping
+    the model's raw proposed arguments (an external attacker never sees
+    what the Victim Agent internally proposed to call, only what actually
+    happened as a result)."""
+
+    return {
+        "step": attempt.get("step"),
+        "name": attempt.get("name"),
+    }
+
+
+def filter_signal_for_observability(
+    signal: dict[str, Any] | None,
+    *,
+    mode: str,
+) -> dict[str, Any] | None:
+    """
+    Filter one extract_round_signal() result down to what the planner is
+    allowed to see under a given observability_mode.
+
+    mode:
+
+        white_box
+            Return signal unchanged. This is the Attack Agent's capability
+            ceiling, not a stand-in for an external attacker.
+
+        gray_box
+            Keep final_status/final_reason/final_response/steps_used and
+            ticket_updates/password_resets (outcomes an attacker could
+            plausibly infer from the ticket's own visible state), but
+            reduce policy_blocks and tool_calls_attempted to coarse
+            outcome facts with rule_id, layer, and raw arguments removed.
+
+        black_box
+            Keep only final_response and final_status: what a ticket
+            portal displaying the Victim Agent's reply, and whether the
+            request was ultimately acted on, would show a real external
+            requester. Everything else (steps_used, policy_blocks,
+            tool_calls_attempted, guard_events, ticket_updates,
+            password_resets) is withheld.
+
+    signal may be None (there is no previous round yet); returned as None
+    unchanged in that case regardless of mode.
+    """
+
+    if signal is None:
+        return None
+
+    if mode not in {"black_box", "gray_box", "white_box"}:
+        raise ValueError(
+            "mode must be one of: black_box, gray_box, white_box."
+        )
+
+    if mode == "white_box":
+        return signal
+
+    if mode == "black_box":
+        return {
+            "final_status": signal.get("final_status"),
+            "final_response": signal.get("final_response"),
+        }
+
+    # gray_box
+    policy_blocks = signal.get("policy_blocks")
+    tool_calls_attempted = signal.get("tool_calls_attempted")
+
+    return {
+        "final_status": signal.get("final_status"),
+        "final_reason": signal.get("final_reason"),
+        "final_response": signal.get("final_response"),
+        "steps_used": signal.get("steps_used"),
+        "policy_blocks": [
+            _redact_policy_block_for_gray_box(block)
+            for block in policy_blocks
+            if isinstance(block, dict)
+        ]
+        if isinstance(policy_blocks, list)
+        else [],
+        "tool_calls_attempted": [
+            _redact_tool_call_attempt(attempt)
+            for attempt in tool_calls_attempted
+            if isinstance(attempt, dict)
+        ]
+        if isinstance(tool_calls_attempted, list)
+        else [],
+        "ticket_updates": signal.get("ticket_updates"),
+        "password_resets": signal.get("password_resets"),
+    }

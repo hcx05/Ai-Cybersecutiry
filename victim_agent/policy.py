@@ -392,10 +392,13 @@ def _validate_reset_password(
     Validate a reset_password request.
 
     This validates structure and argument format only. Whether
-    employee_email actually matches the assigned ticket's submitter is
-    an identity check that requires reading the ticket itself, so it is
-    performed inside victim_agent/tools/account.py, not here (see that
-    module's docstring for why).
+    employee_email actually matches the assigned ticket's submitter
+    (submitter_binding_check) requires reading the ticket itself, so it
+    is performed inside victim_agent/tools/account.py, not here (see that
+    module's docstring for why, and for why submitter_binding_check is
+    not the same thing as identity verification). This module never
+    checks intake_channel either: that trust-level gate is prompt-
+    enforced only, defined in victim_agent/prompts/system.txt, not here.
     """
 
     valid_keys, key_error = _validate_exact_argument_keys(
