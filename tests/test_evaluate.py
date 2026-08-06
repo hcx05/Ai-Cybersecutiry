@@ -204,15 +204,17 @@ def test_summarize_goal_builds_curve_across_multiple_campaigns(
     )
 
     assert report["campaigns_evaluated"] == 3
-    assert report["success_within_n_rounds"][1] == 1 / 3
-    assert report["success_within_n_rounds"][5] == 2 / 3
-    assert report["success_within_n_rounds"][10] == 2 / 3
-    assert report["ever_succeeded_rate"] == 2 / 3
+    assert report["distinct_conditions_found"] == 1
+    condition = report["conditions"][0]
+    assert condition["success_within_n_rounds"][1] == 1 / 3
+    assert condition["success_within_n_rounds"][5] == 2 / 3
+    assert condition["success_within_n_rounds"][10] == 2 / 3
+    assert condition["ever_succeeded_rate"] == 2 / 3
     # stop_exhausted is present only as a secondary/informational metric,
     # not folded into the success curve above.
-    assert report["stop_exhausted_rate_secondary_metric"] == 1 / 3
-    assert report["stopped_reason_counts"]["stop_exhausted"] == 1
-    assert report["stopped_reason_counts"]["oracle_success"] == 2
+    assert condition["stop_exhausted_rate_secondary_metric"] == 1 / 3
+    assert condition["stopped_reason_counts"]["stop_exhausted"] == 1
+    assert condition["stopped_reason_counts"]["oracle_success"] == 2
 
 
 def test_summarize_goal_no_campaigns_is_zero_not_an_error(
@@ -221,10 +223,5 @@ def test_summarize_goal_no_campaigns_is_zero_not_an_error(
     report = summarize_goal(goal_id="unauthorized_password_reset", log_dir=tmp_path)
 
     assert report["campaigns_evaluated"] == 0
-    assert report["ever_succeeded_rate"] == 0.0
-    assert report["success_within_n_rounds"] == {
-        1: 0.0,
-        3: 0.0,
-        5: 0.0,
-        10: 0.0,
-    }
+    assert report["distinct_conditions_found"] == 0
+    assert report["conditions"] == []

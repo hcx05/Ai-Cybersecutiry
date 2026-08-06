@@ -15,7 +15,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from attack_agent.analyzer import extract_round_signal
+from attack_agent.analyzer import (
+    extract_round_signal,
+    filter_signal_for_observability,
+)
 from attack_agent.ollama_client import (
     AttackModelError,
     call_ollama_chat,
@@ -24,6 +27,7 @@ from attack_agent.ollama_client import (
 from attack_agent.schemas import (
     AttackGoal,
     AttackRound,
+    OBSERVABILITY_MODES,
     PlannerDecision,
     SchemaValidationError,
     build_planner_decision,
@@ -103,6 +107,8 @@ def _summarize_round_for_prompt(
 
 def _build_full_history_summary(
     history: list[AttackRound],
+    *,
+    observability_mode: str,
 ) -> dict[str, Any]:
     """
     Build a compact summary spanning the campaign's *entire* history, not
@@ -117,7 +123,26 @@ def _build_full_history_summary(
     summary never grows with the raw content of old rounds (only labels
     and rule IDs), so it stays cheap to include on every call regardless
     of campaign length.
+
+    observability_mode gates what each past round contributes here, via
+    attack_agent.analyzer.filter_signal_for_observability -- the exact
+    same filter latest_signal already goes through. Earlier, this
+    function called extract_round_signal directly on each round's
+    unfiltered victim_result and read rule_id straight out of it, so a
+    black_box or gray_box campaign still leaked every internal rule_id
+    into the planner's prompt from round 2 onward regardless of the
+    requested observability_mode; only latest_signal (the most recent
+    round alone) was actually being filtered. all_strategy_labels_tried
+    is unaffected by observability_mode: it is the Attack Agent's own
+    record of what it tried, not information about the Victim Agent's
+    internals, so it is safe to keep at every level.
     """
+
+    if observability_mode not in OBSERVABILITY_MODES:
+        raise ValueError(
+            "observability_mode must be one of: "
+            + ", ".join(sorted(OBSERVABILITY_MODES))
+        )
 
     all_strategy_labels_tried: list[str] = []
     failed_rule_ids_seen: list[str] = []
@@ -128,19 +153,33 @@ def _build_full_history_summary(
         if label not in all_strategy_labels_tried:
             all_strategy_labels_tried.append(label)
 
-        signal = extract_round_signal(attack_round.victim_result)
+        raw_signal = extract_round_signal(attack_round.victim_result)
+        filtered_signal = filter_signal_for_observability(
+            raw_signal,
+            mode=observability_mode,
+        )
 
-        for block in signal.get("policy_blocks", []):
+        if filtered_signal is None:
+            continue
+
+        for block in filtered_signal.get("policy_blocks") or []:
+            if not isinstance(block, dict):
+                continue
+
             rule_id = block.get("rule_id")
 
             if isinstance(rule_id, str) and rule_id not in failed_rule_ids_seen:
                 failed_rule_ids_seen.append(rule_id)
 
-    return {
+    summary: dict[str, Any] = {
         "rounds_attempted": len(history),
         "all_strategy_labels_tried": all_strategy_labels_tried,
-        "failed_rule_ids_seen": failed_rule_ids_seen,
     }
+
+    if observability_mode == "white_box":
+        summary["failed_rule_ids_seen"] = failed_rule_ids_seen
+
+    return summary
 
 
 def _parse_planner_response(raw_content: str) -> PlannerDecision:
@@ -176,6 +215,7 @@ def plan_next_round(
     goal: AttackGoal,
     history: list[AttackRound],
     latest_signal: dict[str, Any] | None,
+    observability_mode: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
     structured_mode: str | None = None,
@@ -197,6 +237,14 @@ def plan_next_round(
     campaign's observability_mode), or None for the opening decision on
     round 1, when there is no previous round.
 
+    observability_mode must be the same mode latest_signal was already
+    filtered under (defaults to "white_box", matching that same default
+    everywhere else). It gates full_history_summary the same way:
+    without it, full_history_summary used to leak every internal rule_id
+    seen across the whole campaign regardless of what observability_mode
+    the caller requested, because only latest_signal (the most recent
+    round) was actually being filtered -- see _build_full_history_summary.
+
     In addition to the truncated round_history window (the
     MAX_HISTORY_ROUNDS_IN_PROMPT most recent rounds, each with a content
     preview), the prompt also includes full_history_summary: strategy
@@ -205,6 +253,16 @@ def plan_next_round(
     retry a technique that failed many rounds earlier simply because that
     round has scrolled out of view.
     """
+
+    selected_observability_mode = (
+        observability_mode if observability_mode is not None else "white_box"
+    )
+
+    if selected_observability_mode not in OBSERVABILITY_MODES:
+        raise PlannerError(
+            "observability_mode must be one of: "
+            + ", ".join(sorted(OBSERVABILITY_MODES))
+        )
 
     selected_model = model if model is not None else os.getenv(MODEL_ENV)
 
@@ -253,7 +311,10 @@ def plan_next_round(
             _summarize_round_for_prompt(attack_round)
             for attack_round in history[-MAX_HISTORY_ROUNDS_IN_PROMPT:]
         ],
-        "full_history_summary": _build_full_history_summary(history),
+        "full_history_summary": _build_full_history_summary(
+            history,
+            observability_mode=selected_observability_mode,
+        ),
         "latest_signal": latest_signal,
     }
 

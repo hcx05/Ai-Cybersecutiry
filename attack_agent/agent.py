@@ -84,6 +84,7 @@ Or from the command line:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -95,7 +96,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from victim_agent.agent import run_victim_agent
+from victim_agent.agent import SYSTEM_PROMPT_PATH, run_victim_agent
 from victim_agent.tools.account import ACCOUNTS_DIR
 from victim_agent.tools.knowledge_base import KNOWLEDGE_BASE_DIR
 from victim_agent.tools.ticket import INBOX_DIR
@@ -113,10 +114,11 @@ from attack_agent.analyzer import (
 )
 from attack_agent.oracle import capture_account_snapshot, evaluate_goal
 from attack_agent.payload_generator import (
+    PAYLOAD_GENERATOR_PROMPT_PATH,
     PayloadGeneratorError,
     generate_payload_content,
 )
-from attack_agent.planner import PlannerError, plan_next_round
+from attack_agent.planner import PLANNER_PROMPT_PATH, PlannerError, plan_next_round
 from attack_agent.schemas import (
     AttackGoal,
     AttackRound,
@@ -227,6 +229,72 @@ def _derive_article_id(goal_id: str) -> str:
 
     candidate = f"ATTACK-{goal_id}".upper().replace("_", "-")
     return candidate[:64]
+
+
+def _sha256_file(path: Path) -> str | None:
+    """
+    Return a prompt file's content hash, or None if it cannot be read.
+
+    None (rather than raising) so a missing or unreadable prompt file
+    degrades condition fingerprinting to "this component is unknown"
+    instead of crashing a campaign that would otherwise run fine; a
+    fingerprint containing None for a component is still distinct from
+    one containing a real hash, so campaigns are never silently grouped
+    together because of a read failure.
+    """
+
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _compute_condition_fingerprint(
+    *,
+    observability_mode: str,
+    campaign_mode: str,
+) -> dict[str, Any]:
+    """
+    Fingerprint the parts of a campaign's configuration that materially
+    change what it is testing, so controller.evaluate.summarize_goal()
+    can group campaigns by what they actually ran under instead of
+    averaging every campaign for a goal_id together regardless of which
+    planner.txt, payload_generator.txt, or victim system.txt version
+    produced it.
+
+    Hashes the actual current content of the three prompt files (not a
+    version label someone has to remember to bump), so a change to any
+    of them -- even one nobody thought to document -- changes the
+    fingerprint. observability_mode and campaign_mode are included
+    directly since they are already plain, comparable strings.
+
+    Returns a dict with "condition_fingerprint" (a single sha256 hex
+    digest suitable for grouping and for passing back into
+    summarize_goal's condition_fingerprint= to select one condition) and
+    "components" (the individual pieces that went into it, kept on the
+    campaign summary so a human reading logs.attack_agent doesn't have to
+    reverse a hash to see what actually differed between two runs).
+    """
+
+    components = {
+        "planner_prompt_sha256": _sha256_file(PLANNER_PROMPT_PATH),
+        "payload_generator_prompt_sha256": _sha256_file(
+            PAYLOAD_GENERATOR_PROMPT_PATH
+        ),
+        "victim_system_prompt_sha256": _sha256_file(SYSTEM_PROMPT_PATH),
+        "observability_mode": observability_mode,
+        "campaign_mode": campaign_mode,
+    }
+
+    fingerprint_source = json.dumps(components, sort_keys=True)
+    condition_fingerprint = hashlib.sha256(
+        fingerprint_source.encode("utf-8")
+    ).hexdigest()
+
+    return {
+        "condition_fingerprint": condition_fingerprint,
+        "components": components,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +643,11 @@ def run_campaign(
             + ", ".join(sorted(CAMPAIGN_MODES))
         )
 
+    condition = _compute_condition_fingerprint(
+        observability_mode=selected_observability_mode,
+        campaign_mode=selected_campaign_mode,
+    )
+
     selected_log_dir = (
         Path(log_dir) if log_dir is not None else DEFAULT_LOG_DIR
     )
@@ -610,6 +683,7 @@ def run_campaign(
                 "max_rounds": selected_max_rounds,
                 "observability_mode": selected_observability_mode,
                 "campaign_mode": selected_campaign_mode,
+                "condition": condition,
                 "rounds_run": 0,
                 "stopped_reason": stopped_reason,
                 "final_decision": None,
@@ -643,6 +717,7 @@ def run_campaign(
                 goal=goal,
                 history=history,
                 latest_signal=planner_visible_signal,
+                observability_mode=selected_observability_mode,
             )
 
         except PlannerError as exc:
@@ -773,6 +848,7 @@ def run_campaign(
         "max_rounds": selected_max_rounds,
         "observability_mode": selected_observability_mode,
         "campaign_mode": selected_campaign_mode,
+        "condition": condition,
         "rounds_run": len(history),
         "stopped_reason": stopped_reason,
         "environment_audit": environment_audit,

@@ -135,6 +135,7 @@ def _install_fakes(
         goal: AttackGoal,
         history: list[Any],
         latest_signal: dict[str, Any] | None,
+        observability_mode: str | None = None,
     ):
         if plan_call_history_lengths is not None:
             plan_call_history_lengths.append(len(history))
@@ -553,7 +554,9 @@ def test_oracle_success_stops_campaign_even_though_planner_says_continue(
         ground_truth={"expected_employee_email": "j.tanaka@example.test"},
     )
 
-    def fake_plan_next_round(*, goal, history, latest_signal):
+    def fake_plan_next_round(
+        *, goal, history, latest_signal, observability_mode=None
+    ):
         return (
             build_planner_decision(
                 action="continue",
