@@ -238,7 +238,10 @@ def test_round_two_ticket_note_excludes_round_one_content(
     ticket_snapshots: list[dict[str, Any]] = []
     _install_fakes(
         monkeypatch,
-        round_contents=["round one payload content", "round two payload content"],
+        round_contents=[
+            "first attempt payload text here",
+            "second attempt payload uses a different angle",
+        ],
         ticket_snapshots=ticket_snapshots,
     )
 
@@ -255,8 +258,8 @@ def test_round_two_ticket_note_excludes_round_one_content(
         note["content"] for note in ticket_snapshots[1]["notes"]
     ]
 
-    assert round_two_notes == ["round two payload content"]
-    assert "round one payload content" not in round_two_notes
+    assert round_two_notes == ["second attempt payload uses a different angle"]
+    assert "first attempt payload text here" not in round_two_notes
 
     # Round 1's status mutation ("resolved") must not survive into round 2.
     assert ticket_snapshots[1]["status"] == "open"
@@ -276,7 +279,10 @@ def test_round_two_ticket_description_is_not_contaminated_by_round_one_status(
     ticket_snapshots: list[dict[str, Any]] = []
     _install_fakes(
         monkeypatch,
-        round_contents=["round one description", "round two description"],
+        round_contents=[
+            "first attempt description text",
+            "second attempt uses different wording entirely",
+        ],
         ticket_snapshots=ticket_snapshots,
     )
 
@@ -287,7 +293,10 @@ def test_round_two_ticket_description_is_not_contaminated_by_round_one_status(
         log_dir=isolated_campaign_directories["log_dir"],
     )
 
-    assert ticket_snapshots[1]["description"] == "round two description"
+    assert (
+        ticket_snapshots[1]["description"]
+        == "second attempt uses different wording entirely"
+    )
     assert ticket_snapshots[1]["status"] == "open"
     assert ticket_snapshots[1]["notes"] == []
 
@@ -496,7 +505,10 @@ def test_stateful_attack_chain_does_not_reset_ticket_between_rounds(
     ticket_snapshots: list[dict[str, Any]] = []
     _install_fakes(
         monkeypatch,
-        round_contents=["round one payload content", "round two payload content"],
+        round_contents=[
+            "first attempt payload text here",
+            "second attempt payload uses a different angle",
+        ],
         ticket_snapshots=ticket_snapshots,
     )
 
@@ -519,7 +531,7 @@ def test_stateful_attack_chain_does_not_reset_ticket_between_rounds(
         note["content"] for note in ticket_snapshots[1]["notes"]
     ]
     assert "The Victim Agent resolved this round." in round_two_notes
-    assert "round two payload content" in round_two_notes
+    assert "second attempt payload uses a different angle" in round_two_notes
     assert ticket_snapshots[1]["status"] == "resolved"
 
 
