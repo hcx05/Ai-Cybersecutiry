@@ -85,12 +85,13 @@ of **successful** strategy」——但截至該輪,沒有任何一輪的 oracle 
 3. 這個發現直接促成了後續的架構性修正:與其繼續在 `planner.txt` 裡加更多
    文字要求,改為新增決定性的程式碼層級檢查(`attack_agent/repetition_guard.py`),
    把「是否重複」的判斷從「拜託模型自己注意」改為系統直接檢查——詳見
-   `experiments/phase1_ipi/results/exp4/`
+   `experiments/phase1_ipi/results/persuasive_atk/exp4/`
 
 ## 五、檔案位置
 
 - `planner_v2.1_forces_concrete_diversity.txt` —— 本次使用的 planner 版本
 - 原始執行紀錄:`logs/attack_agent/ipi_exp3/`(5 組 campaign,各 12 輪 +
   summary)
-- 對照組(實驗 2,v2 planner):`experiments/phase1_ipi/results/exp2/`
-- 後續修正與驗證:`experiments/phase1_ipi/results/exp4/`
+- 對照組(實驗 2,v2 planner):
+  `experiments/phase1_ipi/results/persuasive_atk/exp2/`
+- 後續修正與驗證:`experiments/phase1_ipi/results/persuasive_atk/exp4/`
