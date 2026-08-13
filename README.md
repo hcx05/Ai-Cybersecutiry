@@ -57,17 +57,25 @@
 
 ---
 
-## 攻擊面總覽(依 MITRE ATT&CK 攻擊階段對應)
+## 攻擊面總覽(依攻擊階段對應)
 
 本專案刻意按照攻擊鏈的不同階段,把研究拆成獨立、各自標明假設前提的部分,而
 不是假裝這是一條從零開始、無縫銜接的鏈——每個階段各自的威脅模型與假設,詳見
 對應的說明文件。
 
-| 階段 | 對應 MITRE ATT&CK | 攻擊管道 | 說明文件 | 狀態 |
+**分類依據以 [MITRE ATLAS](https://atlas.mitre.org/) 為主要對應**——ATLAS 是
+MITRE 專門針對 AI/ML 系統威脅建立的框架,涵蓋 LLM prompt injection 這類
+AI-specific 的攻擊技術;傳統的 MITRE ATT&CK 主要描述的是攻擊者在傳統
+網路/系統環境裡取得立足點的手法,拿來套用在「說服一個 LLM agent 做出不該
+做的事」這種情境上,只能算是概念上的類比(conceptual analogue),不是精確
+對應。下表的 Initial Access / Persistence / Impact 保留作為概念類比參考,
+正式的技術對應以 ATLAS 為準。
+
+| 階段 | 概念類比(ATT&CK) | 攻擊管道 | 說明文件 | 狀態 |
 |---|---|---|---|---|
-| Phase 1 | Initial Access | 工單內容(`ticket_note` / `ticket_description`) | [experiments/phase1_ipi/README.md](experiments/phase1_ipi/README.md) | 已有初步結果 |
-| Phase 2 | Persistence | 知識庫文章(`knowledge_base_article`) | [experiments/phase2_data_attack/README.md](experiments/phase2_data_attack/README.md) | 尚未開始執行 |
-| Phase 3 | Impact | 承接 Phase 2 的立足點,以 `reset_password` 為終點目標 | 尚未定義 `AttackGoal` | 規劃中 |
+| Phase 1 | Initial Access(概念類比) | 工單內容(`ticket_note` / `ticket_description`) | [experiments/phase1_ipi/README.md](experiments/phase1_ipi/README.md) | 已有初步結果 |
+| Phase 2 | Persistence(概念類比) | 知識庫文章(`knowledge_base_article`) | [experiments/phase2_data_attack/README.md](experiments/phase2_data_attack/README.md) | 尚未開始執行 |
+| Phase 3 | Impact(概念類比) | 承接 Phase 2 的立足點,以 `reset_password` 為終點目標 | 尚未定義 `AttackGoal` | 規劃中 |
 
 ---
 

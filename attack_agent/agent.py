@@ -145,6 +145,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG_DIR = PROJECT_ROOT / "logs" / "attack_agent"
 DEFAULT_MAX_ROUNDS = 5
 
+# Bumped whenever a change to this file's own control flow -- not a
+# prompt, not an existing documented parameter -- materially changes
+# what a campaign run under it is testing. See
+# _compute_condition_fingerprint's docstring for why this exists: "v2"
+# marks the point attack_agent.repetition_guard was wired into the
+# round loop (a round can now be skipped before delivery), which
+# changed what every campaign afterward was actually testing even
+# though no prompt file changed.
+CAMPAIGN_ENGINE_VERSION = "v2"
+
 JSON_SUFFIX = ".json"
 
 
@@ -257,6 +267,7 @@ def _compute_condition_fingerprint(
     *,
     observability_mode: str,
     campaign_mode: str,
+    duplicate_similarity_threshold: float,
 ) -> dict[str, Any]:
     """
     Fingerprint the parts of a campaign's configuration that materially
@@ -269,8 +280,21 @@ def _compute_condition_fingerprint(
     Hashes the actual current content of the three prompt files (not a
     version label someone has to remember to bump), so a change to any
     of them -- even one nobody thought to document -- changes the
-    fingerprint. observability_mode and campaign_mode are included
-    directly since they are already plain, comparable strings.
+    fingerprint. observability_mode, campaign_mode, and
+    duplicate_similarity_threshold are included directly since they are
+    already plain, comparable values.
+
+    CAMPAIGN_ENGINE_VERSION is included so that a change to this loop's
+    own logic -- not any prompt file, not any of the settings above --
+    still changes the fingerprint. Without this, two campaigns run before
+    and after attack_agent.repetition_guard was added produced identical
+    fingerprints despite testing materially different things (one had no
+    mechanism forcing round-to-round content diversity at all; the other
+    did), because neither planner.txt nor any existing component actually
+    changed between them. Bump CAMPAIGN_ENGINE_VERSION by hand whenever a
+    change to this file's own control flow -- not a prompt, not a
+    documented parameter -- would materially change what a campaign run
+    under it is testing.
 
     Returns a dict with "condition_fingerprint" (a single sha256 hex
     digest suitable for grouping and for passing back into
@@ -281,6 +305,7 @@ def _compute_condition_fingerprint(
     """
 
     components = {
+        "campaign_engine_version": CAMPAIGN_ENGINE_VERSION,
         "planner_prompt_sha256": _sha256_file(PLANNER_PROMPT_PATH),
         "payload_generator_prompt_sha256": _sha256_file(
             PAYLOAD_GENERATOR_PROMPT_PATH
@@ -288,6 +313,7 @@ def _compute_condition_fingerprint(
         "victim_system_prompt_sha256": _sha256_file(SYSTEM_PROMPT_PATH),
         "observability_mode": observability_mode,
         "campaign_mode": campaign_mode,
+        "duplicate_similarity_threshold": duplicate_similarity_threshold,
     }
 
     fingerprint_source = json.dumps(components, sort_keys=True)
@@ -681,6 +707,7 @@ def run_campaign(
     condition = _compute_condition_fingerprint(
         observability_mode=selected_observability_mode,
         campaign_mode=selected_campaign_mode,
+        duplicate_similarity_threshold=selected_duplicate_similarity_threshold,
     )
 
     selected_log_dir = (

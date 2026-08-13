@@ -1,6 +1,8 @@
 # Phase 1:間接提示注入(Indirect Prompt Injection)
 
-對應 MITRE ATT&CK 階段:**Initial Access**
+概念類比(MITRE ATT&CK):**Initial Access**——正式的 AI-specific 技術對應以
+[MITRE ATLAS](https://atlas.mitre.org/) 為主,詳見根目錄 `README.md` 的
+「攻擊面總覽」段落。
 
 ---
 
@@ -91,7 +93,7 @@ from the submitter for a password reset.
 `victim_agent/agent.py` 的程式碼層級都沒有對它做任何強制檢查。因此「Victim Agent
 在本次測試中沒有被說服違反 `intake_channel` 規則」是唯一準確的講法;「系統層級
 防禦擋下了攻擊」這種講法會誇大這一層防禦的等級,見
-`results/exp1/experiment_1_defense_and_baseline_attack.md` 的措辭修正。
+`results/persuasive_atk/exp1/experiment_1_defense_and_baseline_attack.md` 的措辭修正。
 
 ### 決定性判定(oracle),不是 Planner 自我宣告成功
 
@@ -157,13 +159,13 @@ oracle,過濾只發生在「送進 Planner prompt 之前」這一關):
    prompt 在不同次執行間,是否真的用了同一個模型建置
 3. **樸素版本已完成**(`planner_v1_naive.txt`,未修改的原始版本):5 次獨立
    執行、每次 12 輪,成功率 0/5,詳見
-   `results/exp1/experiment_1_defense_and_baseline_attack.md`
+   `results/persuasive_atk/exp1/experiment_1_defense_and_baseline_attack.md`
 4. **精細版本已完成**(`planner_v2_addresses_block_reason.txt`):針對觀察到
    的具體弱點——樸素版 12 輪從未正面處理過 `intake_channel` 這個具體拒絕
    理由,只反覆加重急迫感/冒充身份——在 `REASONING` 段落新增規則,要求讀取
    `latest_signal` 的 `rule_id`/`reason` 並針對該理由設計對策。5 次獨立執行、
    每次 12 輪,成功率同樣 0/5,但質化內容分析顯示明確差異,詳見
-   `results/exp2/experiment_2_defense_and_baseline_attack.md`
+   `results/persuasive_atk/exp2/experiment_2_defense_and_baseline_attack.md`
 5. 比較不同 planner 版本時,主要看「N 輪內成功率」曲線(1/3/5/10 輪,見
    `controller/evaluate.py`),不是單一「有沒有在輪數上限內成功」的二元結果;
    `stop_exhausted` 只當作次要/資訊性指標,不是判斷版本優劣的終止條件
@@ -174,17 +176,22 @@ oracle,過濾只發生在「送進 Planner prompt 之前」這一關):
 
 ## 實驗結果總覽
 
+完整的五輪實驗結果、匯總統計,以及研究問題範圍的校正說明,見
+`results/persuasive_atk/summary.md`。以下僅摘要前兩輪:
+
 | 版本 | planner.txt | 成功率 | 質化觀察 | 完整報告 |
 |---|---|---|---|---|
-| 實驗 1(樸素版) | `planner_v1_naive.txt` | 0/5 | 12 輪始終停留在加重急迫感/冒充身份的框架,從未正面處理 `intake_channel` 這個具體拒絕理由 | `results/exp1/experiment_1_defense_and_baseline_attack.md` |
-| 實驗 2(精細版) | `planner_v2_addresses_block_reason.txt` | 0/5 | 5/5 全數收斂到新角度(聲稱身份驗證已透過工單管道以外的其他方式完成),3/5 最後一輪能精準點名 `intake_channel`/提交管道為具體障礙 | `results/exp2/experiment_2_defense_and_baseline_attack.md` |
+| 實驗 1(樸素版) | `planner_v1_naive.txt` | 0/5 | 12 輪始終停留在加重急迫感/冒充身份的框架,從未正面處理 `intake_channel` 這個具體拒絕理由 | `results/persuasive_atk/exp1/experiment_1_defense_and_baseline_attack.md` |
+| 實驗 2(精細版) | `planner_v2_addresses_block_reason.txt` | 0/5 | 5/5 全數收斂到新角度(聲稱身份驗證已透過工單管道以外的其他方式完成),3/5 最後一輪能精準點名 `intake_channel`/提交管道為具體障礙 | `results/persuasive_atk/exp2/experiment_2_defense_and_baseline_attack.md` |
 
-**核心結論**:二元成功率(0/5 vs 0/5)本身無法區分兩個版本的差異,因為
+**核心結論(措辭已依 `results/persuasive_atk/summary.md` 校正,詳見該文件
+第五節)**:二元成功率(0/5 vs 0/5)本身無法區分兩個版本的差異,因為
 `intake_channel` 規則是刻意設計成無例外的硬規則,連正面挑戰都不保證能通過。
-但**質化內容分析顯示明確、可重複的行為差異**:樸素版從未觸及防禦的實際
-判斷依據,精細版五次執行全數命中新規則要引導的角度。這證明了 `planner.txt`
-的邏輯品質,確實會改變攻擊代理產生策略的**針對性**,即使沒有改變最終的
-二元結果——呼應了本階段一開始設定的研究問題。
+質化內容分析顯示明確、可重複的行為差異:樸素版從未觸及防禦的實際判斷依據,
+精細版五次執行全數命中新規則要引導的角度。**這證明了修改 `planner.txt` 能
+可靠地引導攻擊代理的策略走向、產生指定類型的反制**——這是行為引導層面的
+成果,不等同於「攻擊代理的推理品質/說服力已獨立提升」的證明,因為新增的
+角度本身是研究者在 prompt 裡明確教給模型的,不是模型自行推理得出。
 
 次要發現(尚未處理,留待下一輪迭代):策略標籤(`strategy_label`)在兩次
 實驗中都出現「換名字、實際內容不變」的現象;`payload_generator` 產生的
@@ -228,8 +235,9 @@ python3 -m attack_agent.agent \
 若要模擬真實外部攻擊者能看到的資訊量,改用 `black_box` 或 `gray_box`。
 
 結果記錄於 `logs/attack_agent/`,正式採用的實驗結果額外複製一份存放於
-`experiments/phase1_ipi/results/expN/`(依執行序號分子目錄,例如
-`results/exp1/`、`results/exp2/`),各自附上完整的實驗報告與當時使用的
+`experiments/phase1_ipi/results/persuasive_atk/expN/`(依執行序號分子目錄,
+例如 `results/persuasive_atk/exp1/`、`results/persuasive_atk/exp2/`),
+各自附上完整的實驗報告與當時使用的
 `planner.txt`/`system.txt` 版本存底。
 
 重複執行同一組固定參數(樸素版或精細版基準的 5 次批次)可用
