@@ -64,6 +64,7 @@ from victim_agent.policy import validate_tool_call
 from victim_agent.tools.account import reset_password
 from victim_agent.tools.knowledge_base import search_knowledge_base
 from victim_agent.tools.ticket import read_ticket, update_ticket
+from victim_agent.tools.verification import verify_credential
 
 
 # ---------------------------------------------------------------------------
@@ -1840,6 +1841,7 @@ def _validate_session_constraints(
         "read_ticket",
         "update_ticket",
         "reset_password",
+        "verify_credential",
     }:
         requested_ticket_id = arguments.get(
             "ticket_id"
@@ -1885,6 +1887,17 @@ def _validate_session_constraints(
                 reason=(
                     "The assigned ticket must be read successfully before "
                     "a password reset may be requested."
+                ),
+            )
+
+    if tool_name == "verify_credential":
+        if not ticket_read_succeeded:
+            return _session_policy_result(
+                decision="blocked",
+                rule_id="SESSION_VERIFY_CREDENTIAL_BEFORE_READ",
+                reason=(
+                    "The assigned ticket must be read successfully "
+                    "before a credential may be verified against it."
                 ),
             )
 
@@ -2027,6 +2040,12 @@ def _execute_tool(
         return reset_password(
             ticket_id=arguments["ticket_id"],
             employee_email=arguments["employee_email"],
+        )
+
+    if tool_name == "verify_credential":
+        return verify_credential(
+            ticket_id=arguments["ticket_id"],
+            credential=arguments["credential"],
         )
 
     raise ToolExecutionError(

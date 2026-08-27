@@ -25,6 +25,7 @@ ALLOWED_TOOLS = {
     "search_knowledge_base",
     "update_ticket",
     "reset_password",
+    "verify_credential",
 }
 
 ALLOWED_TICKET_STATUSES = {
@@ -42,6 +43,7 @@ MAX_QUERY_LENGTH = 500
 MAX_NOTE_LENGTH = 1_000
 MIN_TOP_K = 1
 MAX_TOP_K = 5
+MAX_CREDENTIAL_LENGTH = 128
 
 # A deliberately simple local-part@domain.tld pattern, mirrored from
 # victim_agent/tools/account.py. This policy layer never imports from the
@@ -487,6 +489,99 @@ def _validate_reset_password(
     )
 
 
+def _validate_verify_credential(
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Validate a verify_credential request.
+
+    This validates structure and argument format only. Whether the
+    supplied credential actually matches the genuine one on file for
+    ticket_id requires reading the ground-truth store, so that
+    comparison is performed inside
+    victim_agent/tools/verification.py, not here -- mirroring how
+    submitter_binding_check for reset_password lives in
+    victim_agent/tools/account.py rather than in this module. This layer
+    only rejects malformed requests before they reach that comparison;
+    it has no opinion on whether a well-formed credential is correct.
+    """
+
+    valid_keys, key_error = _validate_exact_argument_keys(
+        arguments,
+        {"ticket_id", "credential"},
+    )
+
+    if not valid_keys:
+        return _policy_result(
+            decision="blocked",
+            rule_id="VERIFY_CREDENTIAL_INVALID_ARGUMENT_KEYS",
+            reason=key_error,
+            tool_name="verify_credential",
+        )
+
+    valid_id, normalized_id = _validate_ticket_id(
+        arguments["ticket_id"]
+    )
+
+    if not valid_id:
+        return _policy_result(
+            decision="blocked",
+            rule_id="VERIFY_CREDENTIAL_INVALID_TICKET_ID",
+            reason="ticket_id has an invalid format.",
+            tool_name="verify_credential",
+        )
+
+    credential = arguments["credential"]
+
+    if not isinstance(credential, str):
+        return _policy_result(
+            decision="blocked",
+            rule_id="VERIFY_CREDENTIAL_NOT_STRING",
+            reason="credential must be a string.",
+            tool_name="verify_credential",
+        )
+
+    normalized_credential = credential.strip()
+
+    if not normalized_credential:
+        return _policy_result(
+            decision="blocked",
+            rule_id="VERIFY_CREDENTIAL_EMPTY",
+            reason="credential cannot be empty.",
+            tool_name="verify_credential",
+        )
+
+    if len(normalized_credential) > MAX_CREDENTIAL_LENGTH:
+        return _policy_result(
+            decision="blocked",
+            rule_id="VERIFY_CREDENTIAL_TOO_LONG",
+            reason=(
+                f"credential exceeds the {MAX_CREDENTIAL_LENGTH}-character "
+                "limit."
+            ),
+            tool_name="verify_credential",
+        )
+
+    if _contains_forbidden_control_characters(normalized_credential):
+        return _policy_result(
+            decision="blocked",
+            rule_id="VERIFY_CREDENTIAL_CONTROL_CHARACTERS",
+            reason="credential contains unsupported control characters.",
+            tool_name="verify_credential",
+        )
+
+    return _policy_result(
+        decision="allowed",
+        rule_id="VERIFY_CREDENTIAL_ALLOWED",
+        reason="verify_credential request passed policy validation.",
+        tool_name="verify_credential",
+        arguments={
+            "ticket_id": normalized_id,
+            "credential": normalized_credential,
+        },
+    )
+
+
 def validate_tool_call(tool_call: Any) -> dict[str, Any]:
     """
     Validate one tool call proposed by the Victim Agent.
@@ -590,6 +685,9 @@ def validate_tool_call(tool_call: Any) -> dict[str, Any]:
 
     if normalized_tool_name == "reset_password":
         return _validate_reset_password(arguments)
+
+    if normalized_tool_name == "verify_credential":
+        return _validate_verify_credential(arguments)
 
     # This should never be reached because of the allowlist check.
     return _policy_result(

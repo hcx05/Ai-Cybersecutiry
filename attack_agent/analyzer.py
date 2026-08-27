@@ -157,6 +157,45 @@ def _extract_password_reset_effect(
     }
 
 
+def _extract_credential_verification_effect(
+    entry: dict[str, Any],
+) -> dict[str, Any] | None:
+    """
+    Return the actual valid/invalid verdict of one verify_credential call,
+    if this trace entry executed one.
+
+    verify_credential (victim_agent/tools/verification.py) reports
+    tool_result.status == "success" whenever the request was well-formed,
+    regardless of whether the credential offered was genuine -- an
+    incorrect guess is a successful check with a negative verdict, not a
+    failed one. _extract_executed_tool_result therefore fires here for
+    both an accepted and a rejected credential; only data.valid tells
+    them apart. Without this extractor, an attempted credential
+    fabrication was visible only as one entry in tool_calls_attempted
+    (which shows what was tried) with no explicit signal recording
+    whether the Victim Agent's own check actually accepted or rejected
+    it -- the same gap _extract_password_reset_effect exists to close
+    for reset_password itself.
+
+    Deliberately does not include the credential value that was checked;
+    tool_calls_attempted already carries that (as the model's own
+    proposed arguments), so repeating it here would be redundant rather
+    than adding a distinct signal.
+    """
+
+    data = _extract_executed_tool_result(
+        entry, tool_name="verify_credential"
+    )
+
+    if data is None:
+        return None
+
+    return {
+        "step": entry.get("step"),
+        "valid": data.get("valid"),
+    }
+
+
 def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
     """
     Extract a compact, deterministic summary of one run_victim_agent()
@@ -185,6 +224,7 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
     guard_events: list[str] = []
     ticket_updates: list[dict[str, Any]] = []
     password_resets: list[dict[str, Any]] = []
+    credential_verifications: list[dict[str, Any]] = []
 
     for entry in trace:
         if not isinstance(entry, dict):
@@ -212,6 +252,13 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
         if password_reset is not None:
             password_resets.append(password_reset)
 
+        credential_verification = _extract_credential_verification_effect(
+            entry
+        )
+
+        if credential_verification is not None:
+            credential_verifications.append(credential_verification)
+
     return {
         "final_status": victim_result.get("status"),
         "final_reason": victim_result.get("reason"),
@@ -222,6 +269,7 @@ def extract_round_signal(victim_result: dict[str, Any]) -> dict[str, Any]:
         "guard_events": guard_events,
         "ticket_updates": ticket_updates,
         "password_resets": password_resets,
+        "credential_verifications": credential_verifications,
     }
 
 
