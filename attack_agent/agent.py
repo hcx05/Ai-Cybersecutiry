@@ -108,6 +108,7 @@ from controller.reset_environment import (
     restore_ticket_from_baseline,
 )
 
+from attack_agent.context_overflow import wrap_content_with_padding
 from attack_agent.analyzer import (
     extract_round_signal,
     filter_signal_for_observability,
@@ -268,6 +269,8 @@ def _compute_condition_fingerprint(
     observability_mode: str,
     campaign_mode: str,
     duplicate_similarity_threshold: float,
+    pad_to_chars: int | None,
+    pad_position: str,
 ) -> dict[str, Any]:
     """
     Fingerprint the parts of a campaign's configuration that materially
@@ -280,9 +283,16 @@ def _compute_condition_fingerprint(
     Hashes the actual current content of the three prompt files (not a
     version label someone has to remember to bump), so a change to any
     of them -- even one nobody thought to document -- changes the
-    fingerprint. observability_mode, campaign_mode, and
-    duplicate_similarity_threshold are included directly since they are
-    already plain, comparable values.
+    fingerprint. observability_mode, campaign_mode,
+    duplicate_similarity_threshold, pad_to_chars, and pad_position are
+    included directly since they are already plain, comparable values.
+    pad_to_chars and pad_position matter here specifically for the
+    context-overflow attack surface (attack_agent.context_overflow):
+    without them, campaigns run at different target payload sizes -- the
+    entire point of that experiment being to compare behavior across
+    sizes -- would otherwise fingerprint identically and get averaged
+    together by summarize_goal(), destroying the one thing that
+    experiment is designed to measure.
 
     CAMPAIGN_ENGINE_VERSION is included so that a change to this loop's
     own logic -- not any prompt file, not any of the settings above --
@@ -314,6 +324,8 @@ def _compute_condition_fingerprint(
         "observability_mode": observability_mode,
         "campaign_mode": campaign_mode,
         "duplicate_similarity_threshold": duplicate_similarity_threshold,
+        "pad_to_chars": pad_to_chars,
+        "pad_position": pad_position,
     }
 
     fingerprint_source = json.dumps(components, sort_keys=True)
@@ -558,6 +570,8 @@ def run_campaign(
     campaign_mode: str | None = None,
     auto_reset: bool = True,
     duplicate_similarity_threshold: float | None = None,
+    pad_to_chars: int | None = None,
+    pad_position: str = "before",
 ) -> dict[str, Any]:
     """
     Run one Attack Agent campaign against the Victim Agent for one
@@ -697,6 +711,20 @@ def run_campaign(
         else duplicate_similarity_threshold
     )
 
+    if pad_to_chars is not None and (
+        not isinstance(pad_to_chars, int)
+        or isinstance(pad_to_chars, bool)
+        or pad_to_chars < 0
+    ):
+        raise AttackAgentError(
+            "pad_to_chars must be a non-negative integer or None."
+        )
+
+    if pad_position not in {"before", "after", "split"}:
+        raise AttackAgentError(
+            "pad_position must be one of: before, after, split."
+        )
+
     if not isinstance(
         selected_duplicate_similarity_threshold, (int, float)
     ) or not (0.0 <= selected_duplicate_similarity_threshold <= 1.0):
@@ -708,6 +736,8 @@ def run_campaign(
         observability_mode=selected_observability_mode,
         campaign_mode=selected_campaign_mode,
         duplicate_similarity_threshold=selected_duplicate_similarity_threshold,
+        pad_to_chars=pad_to_chars,
+        pad_position=pad_position,
     )
 
     selected_log_dir = (
@@ -807,6 +837,13 @@ def run_campaign(
         except PayloadGeneratorError as exc:
             stopped_reason = f"payload_generator_error: {exc}"
             break
+
+        if pad_to_chars is not None and pad_to_chars > 0:
+            content = wrap_content_with_padding(
+                content,
+                target_total_chars=pad_to_chars,
+                padding_position=pad_position,
+            )
 
         try:
             payload = build_attack_payload(
@@ -1100,6 +1137,28 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--pad-to-chars",
+        type=int,
+        default=None,
+        help=(
+            "Inflate each round's generated content to approximately "
+            "this many characters with deterministic filler text before "
+            "delivery, for the context-overflow attack surface "
+            "(attack_agent.context_overflow). Omit or set to 0 to "
+            "deliver content at its normal, unpadded size."
+        ),
+    )
+    parser.add_argument(
+        "--pad-position",
+        choices=("before", "after", "split"),
+        default="before",
+        help=(
+            "Where padding is placed relative to the real generated "
+            "content when --pad-to-chars is set. Ignored otherwise. "
+            "Defaults to 'before'."
+        ),
+    )
+    parser.add_argument(
         "--no-auto-reset",
         action="store_true",
         help=(
@@ -1155,6 +1214,8 @@ def main() -> int:
             duplicate_similarity_threshold=(
                 arguments.duplicate_similarity_threshold
             ),
+            pad_to_chars=arguments.pad_to_chars,
+            pad_position=arguments.pad_position,
         )
 
     except json.JSONDecodeError as exc:
