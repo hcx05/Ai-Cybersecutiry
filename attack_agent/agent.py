@@ -131,6 +131,7 @@ from attack_agent.schemas import (
     DEFAULT_CAMPAIGN_MODE,
     DEFAULT_OBSERVABILITY_MODE,
     KNOWLEDGE_BASE_CHANNELS,
+    MAX_PAYLOAD_CONTENT_LENGTH,
     OBSERVABILITY_MODES,
     PlannerDecision,
     SchemaValidationError,
@@ -861,6 +862,11 @@ def run_campaign(
                 target_article_id=(
                     resolved_article_id
                     if goal.target_channel in KNOWLEDGE_BASE_CHANNELS
+                    else None
+                ),
+                max_content_length=(
+                    max(MAX_PAYLOAD_CONTENT_LENGTH, pad_to_chars)
+                    if pad_to_chars is not None and pad_to_chars > 0
                     else None
                 ),
             )

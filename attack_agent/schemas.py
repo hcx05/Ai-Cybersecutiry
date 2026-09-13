@@ -469,6 +469,7 @@ def build_attack_payload(
     rationale: Any,
     target_ticket_id: Any = None,
     target_article_id: Any = None,
+    max_content_length: int | None = None,
 ) -> AttackPayload:
     """
     Validate raw input and construct one AttackPayload.
@@ -476,6 +477,17 @@ def build_attack_payload(
     Enforces that the target identifier matching target_channel is present,
     and that the other target identifier is not, so a payload can never be
     ambiguous about which single file it will be delivered into.
+
+    max_content_length overrides MAX_PAYLOAD_CONTENT_LENGTH for this call
+    only, when given; every other attack surface leaves this at its
+    default (None -- MAX_PAYLOAD_CONTENT_LENGTH applies exactly as
+    before). This exists for attack_agent.context_overflow: its entire
+    purpose is delivering content far beyond MAX_PAYLOAD_CONTENT_LENGTH,
+    which is otherwise a legitimate sanity bound against a malfunctioning
+    payload generator producing runaway content by accident on every
+    other attack surface. Raising the module-level constant instead would
+    have silently removed that protection everywhere, not just for the
+    one experiment that actually needs a larger bound.
     """
 
     normalized_channel = _validate_target_channel(target_channel)
@@ -524,7 +536,11 @@ def build_attack_payload(
         content=_validate_text(
             content,
             field_name="content",
-            max_length=MAX_PAYLOAD_CONTENT_LENGTH,
+            max_length=(
+                MAX_PAYLOAD_CONTENT_LENGTH
+                if max_content_length is None
+                else max_content_length
+            ),
         ),
         strategy_label=_validate_text(
             strategy_label,
