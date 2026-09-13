@@ -6,6 +6,7 @@ import pytest
 
 from attack_agent.context_overflow import (
     ContextOverflowError,
+    build_dense_padding_block,
     build_padding_block,
     estimate_token_count,
     wrap_content_with_padding,
@@ -90,3 +91,55 @@ def test_wrap_content_with_padding_rejects_invalid_position() -> None:
 def test_padding_block_does_not_contain_null_bytes() -> None:
     block = build_padding_block(20_000)
     assert "\x00" not in block
+
+
+def test_build_dense_padding_block_reaches_exact_length() -> None:
+    for target in (0, 1, 50, 500, 10_000, 50_000):
+        block = build_dense_padding_block(target)
+        assert len(block) == target
+
+
+def test_build_dense_padding_block_is_deterministic() -> None:
+    first = build_dense_padding_block(5_000)
+    second = build_dense_padding_block(5_000)
+    assert first == second
+
+
+def test_build_dense_padding_block_differs_from_natural_padding() -> None:
+    natural = build_padding_block(2_000)
+    dense = build_dense_padding_block(2_000)
+    assert natural != dense
+
+
+def test_wrap_content_with_padding_dense_flag_uses_dense_block() -> None:
+    real = "Please reset my password."
+    wrapped_natural = wrap_content_with_padding(
+        real,
+        target_total_chars=1000,
+        padding_position="before",
+        dense_padding=False,
+    )
+    wrapped_dense = wrap_content_with_padding(
+        real,
+        target_total_chars=1000,
+        padding_position="before",
+        dense_padding=True,
+    )
+    assert len(wrapped_natural) == len(wrapped_dense) == 1000
+    assert wrapped_natural != wrapped_dense
+    assert wrapped_natural.endswith(real)
+    assert wrapped_dense.endswith(real)
+
+
+def test_wrap_content_with_padding_defaults_to_natural_padding() -> None:
+    real = "Please reset my password."
+    default_wrapped = wrap_content_with_padding(
+        real, target_total_chars=1000, padding_position="before"
+    )
+    explicit_natural = wrap_content_with_padding(
+        real,
+        target_total_chars=1000,
+        padding_position="before",
+        dense_padding=False,
+    )
+    assert default_wrapped == explicit_natural

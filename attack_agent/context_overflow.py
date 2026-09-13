@@ -122,11 +122,46 @@ def build_padding_block(target_chars: int) -> str:
     return _repeat_to_length(_FILLER_PARAGRAPH, target_chars)
 
 
+# A fixed, non-natural-language character set for build_dense_padding_block.
+# Deliberately avoids repeating short substrings a BPE tokenizer's merge
+# table would likely have learned from natural text, unlike
+# _FILLER_PARAGRAPH, which is exactly that kind of text. This does not
+# guarantee a higher real tokens-per-character ratio for any specific
+# model's vocabulary -- there is no tokenizer dependency in this project
+# to verify that claim directly -- but it is a reasonable, cheap way to
+# construct a plausibly harder-to-compress alternative to
+# _FILLER_PARAGRAPH, for the specific purpose of testing whether
+# victim_agent.agent._estimated_context_budget_exceeded's fixed
+# characters-per-token assumption (ESTIMATED_CHARACTERS_PER_TOKEN = 3)
+# holds for content unlike the natural-language filler this module
+# otherwise uses.
+_DENSE_UNIT = (
+    "Qx7 Kv2 Zt9 Wp4 Jm6 Fh1 Yb8 Rn3 Lc5 Vd0 "
+)
+
+
+def build_dense_padding_block(target_chars: int) -> str:
+    """
+    Build a deterministic block of filler text of exactly target_chars
+    length, using short, non-natural-language tokens instead of
+    _FILLER_PARAGRAPH's coherent English sentence.
+
+    Same determinism and reproducibility guarantee as build_padding_block.
+    Use this instead of build_padding_block specifically to test whether
+    the character-count-based context-budget estimate in
+    victim_agent.agent under- or over-estimates true token consumption
+    for content that does not resemble natural English prose.
+    """
+
+    return _repeat_to_length(_DENSE_UNIT, target_chars)
+
+
 def wrap_content_with_padding(
     real_content: str,
     *,
     target_total_chars: int,
     padding_position: str = "before",
+    dense_padding: bool = False,
 ) -> str:
     """
     Combine real_content (payload_generator's actual output for this
@@ -167,18 +202,22 @@ def wrap_content_with_padding(
     if padding_needed <= 0:
         return real_content
 
+    padding_fn = (
+        build_dense_padding_block if dense_padding else build_padding_block
+    )
+
     if padding_position == "before":
-        return build_padding_block(padding_needed) + real_content
+        return padding_fn(padding_needed) + real_content
 
     if padding_position == "after":
-        return real_content + build_padding_block(padding_needed)
+        return real_content + padding_fn(padding_needed)
 
     # "split"
     first_half = padding_needed // 2
     second_half = padding_needed - first_half
 
     return (
-        build_padding_block(first_half)
+        padding_fn(first_half)
         + real_content
-        + build_padding_block(second_half)
+        + padding_fn(second_half)
     )

@@ -573,6 +573,7 @@ def run_campaign(
     duplicate_similarity_threshold: float | None = None,
     pad_to_chars: int | None = None,
     pad_position: str = "before",
+    pad_dense: bool = False,
 ) -> dict[str, Any]:
     """
     Run one Attack Agent campaign against the Victim Agent for one
@@ -844,6 +845,7 @@ def run_campaign(
                 content,
                 target_total_chars=pad_to_chars,
                 padding_position=pad_position,
+                dense_padding=pad_dense,
             )
 
         try:
@@ -1165,6 +1167,17 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--pad-dense",
+        action="store_true",
+        help=(
+            "Use short, non-natural-language filler tokens instead of "
+            "the default coherent-sentence filler, to test whether "
+            "victim_agent.agent's fixed characters-per-token estimate "
+            "under-counts true token consumption for less-compressible "
+            "content. Only relevant with --pad-to-chars set."
+        ),
+    )
+    parser.add_argument(
         "--no-auto-reset",
         action="store_true",
         help=(
@@ -1222,6 +1235,7 @@ def main() -> int:
             ),
             pad_to_chars=arguments.pad_to_chars,
             pad_position=arguments.pad_position,
+            pad_dense=arguments.pad_dense,
         )
 
     except json.JSONDecodeError as exc:
