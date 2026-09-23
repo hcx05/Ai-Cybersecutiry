@@ -20,15 +20,7 @@ data/runtime/accounts/*
 !data/runtime/vector_store/.gitkeep
 !data/runtime/accounts/.gitkeep
 
-# Experiment logs
-logs/attack_agent/*
-logs/victim_agent/*
-logs/results/*
-
-# Keep empty log directories
-!logs/attack_agent/.gitkeep
-!logs/victim_agent/.gitkeep
-!logs/results/.gitkeep
+# Experiment logs are now tracked so all results sync to GitHub (see logs/attack_agent, logs/victim_agent, logs/results)
 
 # Local model and vector database files
 *.gguf
