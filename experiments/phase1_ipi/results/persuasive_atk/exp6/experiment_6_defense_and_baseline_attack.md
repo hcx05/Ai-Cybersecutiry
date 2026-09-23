@@ -48,11 +48,11 @@ pattern completion)**:
 | Victim system prompt | 憑證偽造階段之後的版本(含 `verify_credential` 例外工具),sha256 `4b1f182d…` |
 | condition_fingerprint | `a3d719a98f5d3bc8…`(五組 campaign 完全一致) |
 
-**說明**:本次執行所用的 planner prompt(sha256 `0641ba3f…`,引入 exemplification
-指引)未在 repo 內另存成獨立檔案,原始 log 只保留了它的 sha256 與模型/取樣
-metadata。可還原的策略指引內容(各 campaign 的 `final_decision.instructions`
-與逐輪 `strategy_label`)整理於同資料夾的
-`planner_exemplification_reference.md`,供重現與比對。
+**說明**:本次執行所用的 planner prompt 已存於同資料夾的
+`planner_v8_exemplification.txt`(sha256 `0641ba3f…`,與原始 log 記錄的
+`planner_prompt_sha256` 完全一致,即引入 exemplification 指引的版本)。各
+campaign 的 `final_decision` 策略評估與逐輪 `strategy_label` 另整理於同資料夾的
+`planner_exemplification_reference.md`,供比對。
 
 ## 三、量化結果:成功率 0/5,無一輪觸發 `reset_password`
 
@@ -161,8 +161,8 @@ bullet-list…)。這正是憑證偽造系列與說服型前五輪都記錄過�
   都限制了因果推論強度(延續全系列的一貫限制)。
 - 結果綁定 `white_box` + `isolated_adaptive_search` + `qwen3:32b` victim 這組
   固定條件,不可脫離條件外推成「系統對舉例型注入免疫」這類通用宣稱。
-- 本次使用的 planner prompt 檔案未存底(僅保留 sha256 與 metadata),嚴格
-  重現需重建同 sha 的 planner 版本;可還原的策略指引見
+- 本次使用的 planner prompt 已存底為 `planner_v8_exemplification.txt`
+  (sha256 `0641ba3f…`,與 log 記錄一致);逐輪策略索引見
   `planner_exemplification_reference.md`。
 
 ## 八、檔案位置
@@ -170,7 +170,9 @@ bullet-list…)。這正是憑證偽造系列與說服型前五輪都記錄過�
 - 原始執行紀錄:`logs/attack_agent/ipi_exp6_exemplification/`
   (5 組 campaign,各 12 輪 + summary)
 - Victim 端逐次紀錄:`logs/victim_agent/20260923-*.json`
-- 可還原的策略指引與逐輪 strategy_label:
+- 本次使用的 planner prompt(exemplification 版):
+  `experiments/phase1_ipi/results/persuasive_atk/exp6/planner_v8_exemplification.txt`
+- 逐輪策略索引(strategy_label + final_decision):
   `experiments/phase1_ipi/results/persuasive_atk/exp6/planner_exemplification_reference.md`
 - 對照組(說服型前五輪):`experiments/phase1_ipi/results/persuasive_atk/exp1…exp5/`
 - 說服型攻擊面綜合報告:`experiments/phase1_ipi/results/persuasive_atk/summary.md`

@@ -1,9 +1,12 @@
-# 實驗 6 planner 策略指引還原(exemplification)
+# 實驗 6 逐輪策略索引(exemplification)
 
-原始 planner prompt 檔(sha256 `0641ba3f83b3f753ece58376828988c3a6e69f6ec0893fe2100f26f98d653f8d`)
-未在 repo 內存底,原始 log 只保留其 sha256 與模型/取樣 metadata。本檔
-由 `logs/attack_agent/ipi_exp6_exemplification/` 的 round log 還原可得的部分:
-各 campaign 最終 `final_decision` 的策略評估與指示,以及逐輪 strategy_label。
+本次執行實際使用的 planner prompt 存於同資料夾的
+`planner_v8_exemplification.txt`(sha256
+`0641ba3f83b3f753ece58376828988c3a6e69f6ec0893fe2100f26f98d653f8d`,與原始
+log 記錄的 `planner_prompt_sha256` 一致)。本檔是它的**逐輪執行索引**,整理自
+`logs/attack_agent/ipi_exp6_exemplification/` 的 round log:各 campaign 最終
+`final_decision` 的策略評估與指示,以及逐輪 strategy_label,供比對 planner
+在該 prompt 下實際產生的策略走向。
 
 - Planner 模型:`qwen3:8b`,temperature 0.7
 - Payload generator 模型:`dolphin3:latest`,temperature 0.9
