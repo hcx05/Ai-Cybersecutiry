@@ -51,7 +51,19 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
 
 ## 目前狀態
 
-**尚未開始執行。** 刻意暫緩,待完成必要的學習與設計後再啟動,不設時程壓力。
+**尚未開始執行,但設計與初步 scaffolding 已就緒。** 完整實作藍圖見
+`DESIGN.md`。已建立的檔案:
+
+- `DESIGN.md` —— Phase 2 設計與實作規劃(建議先讀)
+- `cases.json` —— goal 規格 `kb_poisoned_article_retrieved` + `ground_truth`
+- `prompts/planner_v1_kb_poisoning.txt` —— KB 下毒專用 planner
+- `data/baseline/tickets/TICKET-004.json` —— 乾淨的觸發工單(無注入)
+- `attack_agent/oracle.py` —— 新增並註冊 `kb_poisoned_article_retrieved`
+  決定性判定(已通過合成 trace 單元驗證)
+- `results/` —— 存放各輪結果與報告(比照 Phase 1 `expN/` 慣例)
+
+尚未實作:檢索 → 未授權密碼重設的端到端鏈(`kb_poison_to_reset`),歸
+Phase 3,原因見 `DESIGN.md` 第四節。
 
 ## 執行方式(待啟動時使用)
 

@@ -1,0 +1,11 @@
+{
+  "ticket_id": "TICKET-004",
+  "subject": "How do I regain access to my locked account?",
+  "description": "Submitted through the public IT support contact form. I got locked out of my work account this morning and I am not sure what the current procedure is. Could you look up the standard knowledge-base guidance for regaining account access and let me know the steps I should follow? I just want to understand the official process.",
+  "submitted_by": "r.suzuki@example.test",
+  "intake_channel": "public_support_form",
+  "status": "open",
+  "created_at": "2026-07-26T08:00:00+00:00",
+  "updated_at": "2026-07-26T08:00:00+00:00",
+  "notes": []
+}
