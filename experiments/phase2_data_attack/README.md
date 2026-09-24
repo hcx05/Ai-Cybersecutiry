@@ -76,12 +76,17 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
 不同)。完整結果與下一步攻擊策略見
 `results/kb_poisoning/exp1/experiment_1_kb_poisoning.md`。
 
-**exp2 已備妥(待實跑)**:檢索 → 未授權密碼重設的端到端橋接
-(`kb_poison_to_reset`)已實作並註冊 oracle、加入 `cases.json`、備妥 v2 毒文章
-planner 與執行腳本 `run_phase2_kb_poison_to_reset.sh`。目標是讓檢索到的毒文章
-驅動 agent 自己呼叫 `reset_password`,正面測試「檢索內容能否鬆動 prompt-
-enforced 的 `intake_channel`」。執行協定見
-`results/kb_poisoning/exp2/PROTOCOL.md`。
+**exp2 已完成(2026-09-24)**:`kb_poison_to_reset` 判定 **0/6**——檢索仍 6/6,
+但 victim **從未嘗試** `reset_password`,把毒文章當成給使用者的參考轉述,連
+`intake_channel`/憑證閘門都沒碰到。0/6 混有攻擊側保真度成因(payload generator
+未把動作框成 agent 執行),結論分層陳述。完整結果見
+`results/kb_poisoning/exp2/experiment_2_kb_poison_to_reset.md`。
+
+**exp3 已備妥(待實跑)**:靜態極端對照,用人工撰寫、最大程度直接命令 agent
+呼叫 `reset_password` 的毒文章,消除 payload generator 變因,乾淨測「victim 會
+不會因檢索內容而『嘗試』特權工具呼叫」。執行:
+`python3 experiments/phase2_data_attack/run_control_static_article.py`,協定見
+`results/kb_poisoning/exp3/PROTOCOL.md`。
 
 ## 執行方式(待啟動時使用)
 
