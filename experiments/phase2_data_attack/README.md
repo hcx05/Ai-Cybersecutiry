@@ -76,8 +76,12 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
 不同)。完整結果與下一步攻擊策略見
 `results/kb_poisoning/exp1/experiment_1_kb_poisoning.md`。
 
-尚未實作:檢索 → 未授權密碼重設的端到端鏈(`kb_poison_to_reset`),歸
-Phase 3,原因見 `DESIGN.md` 第四節。
+**exp2 已備妥(待實跑)**:檢索 → 未授權密碼重設的端到端橋接
+(`kb_poison_to_reset`)已實作並註冊 oracle、加入 `cases.json`、備妥 v2 毒文章
+planner 與執行腳本 `run_phase2_kb_poison_to_reset.sh`。目標是讓檢索到的毒文章
+驅動 agent 自己呼叫 `reset_password`,正面測試「檢索內容能否鬆動 prompt-
+enforced 的 `intake_channel`」。執行協定見
+`results/kb_poisoning/exp2/PROTOCOL.md`。
 
 ## 執行方式(待啟動時使用)
 
