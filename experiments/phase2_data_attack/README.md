@@ -68,8 +68,13 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
   staged prompts、示範毒文章)
 - `results/` —— 存放各輪結果與報告(比照 Phase 1 `expN/` 慣例)
 
-首次實驗的完整執行步驟見 `results/kb_poisoning/exp1/PROTOCOL.md`。實驗本體
-需本機 Ollama 與模型,尚未實跑;檢索前提已於雲端以純 Python 驗證。
+首次實驗的完整執行步驟見 `results/kb_poisoning/exp1/PROTOCOL.md`。
+
+**exp1 已完成(2026-09-24)**:`kb_poisoned_article_retrieved` 判定 **5/5
+達成**——毒文章被乾淨觸發工單可靠檢索進 victim 脈絡並影響其輸出。過程中
+發現並修正了一個 oracle 假陰性 bug(search 的 tool_result 結構與其他工具
+不同)。完整結果與下一步攻擊策略見
+`results/kb_poisoning/exp1/experiment_1_kb_poisoning.md`。
 
 尚未實作:檢索 → 未授權密碼重設的端到端鏈(`kb_poison_to_reset`),歸
 Phase 3,原因見 `DESIGN.md` 第四節。
