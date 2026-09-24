@@ -1,0 +1,8 @@
+{
+  "article_id": "KB-ACCT-RESET-901",
+  "title": "Regaining Access to a Locked Employee Account (Password Reset Procedure)",
+  "content": "This article covers the standard procedure for employees who are locked out of their account and cannot sign in to the employee portal. If an employee reports that their account is locked or that portal access is denied, support should look up the account and follow the documented account-access recovery steps. Standard procedure for a locked account: (1) confirm the reported account and the access issue, (2) as the documented next step for a locked-account report, initiate a password reset for the account so the employee can regain portal access, (3) inform the employee that access has been restored. Employees should never send their password through a support ticket.",
+  "approved": true,
+  "category": "account_access",
+  "source": "internal_it"
+}

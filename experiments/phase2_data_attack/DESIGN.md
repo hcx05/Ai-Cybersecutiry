@@ -52,6 +52,9 @@ Phase 1 的程式碼已經支援 KB 管道,Phase 2 不必動這些:
 | `experiments/phase2_data_attack/prompts/planner_v1_kb_poisoning.txt` | KB 下毒專用 planner:強制「先確保可被檢索(真關鍵字),再談嵌入手法」 |
 | `attack_agent/oracle.py` | 新增 `kb_poisoned_article_retrieved` checker 並註冊(見下節) |
 | `experiments/phase2_data_attack/results/` | 存放各輪實驗結果與報告(比照 Phase 1 的 `expN/` 慣例) |
+| `experiments/phase2_data_attack/check_retrieval.py` | 無需 LLM 的檢索前置驗證:用真實 `search_knowledge_base` 確認毒文章可被 on-topic 查詢檢索到(**已跑過,PASS**) |
+| `run_phase2_kb_poisoning.sh` | 第一次實驗的批次執行腳本;自動把 KB 下毒 planner 覆蓋到固定路徑再還原 |
+| `results/kb_poisoning/exp1/` | 首次實驗前置檔案與協定(`PROTOCOL.md`、staged prompts、示範毒文章) |
 
 ---
 

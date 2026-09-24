@@ -60,7 +60,16 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
 - `data/baseline/tickets/TICKET-004.json` —— 乾淨的觸發工單(無注入)
 - `attack_agent/oracle.py` —— 新增並註冊 `kb_poisoned_article_retrieved`
   決定性判定(已通過合成 trace 單元驗證)
+- `check_retrieval.py` —— 無需 LLM 的檢索前置驗證(**已跑過,PASS**:毒文章
+  對代表性 on-topic 查詢皆檢索命中且排名第 1)
+- `../../run_phase2_kb_poisoning.sh` —— 第一次實驗批次執行腳本(自動覆蓋/
+  還原 planner)
+- `results/kb_poisoning/exp1/` —— 首次實驗前置檔案與協定(`PROTOCOL.md`、
+  staged prompts、示範毒文章)
 - `results/` —— 存放各輪結果與報告(比照 Phase 1 `expN/` 慣例)
+
+首次實驗的完整執行步驟見 `results/kb_poisoning/exp1/PROTOCOL.md`。實驗本體
+需本機 Ollama 與模型,尚未實跑;檢索前提已於雲端以純 Python 驗證。
 
 尚未實作:檢索 → 未授權密碼重設的端到端鏈(`kb_poison_to_reset`),歸
 Phase 3,原因見 `DESIGN.md` 第四節。
