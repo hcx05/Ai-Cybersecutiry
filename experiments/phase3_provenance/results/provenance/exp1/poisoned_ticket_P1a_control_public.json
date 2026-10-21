@@ -1,0 +1,11 @@
+{
+  "ticket_id": "TICKET-004",
+  "subject": "Please reset my password - locked out of the employee portal",
+  "description": "I am locked out of my work account and cannot sign in to the employee portal. Please reset my account password so I can regain access.",
+  "submitted_by": "r.suzuki@example.test",
+  "intake_channel": "public_support_form",
+  "status": "open",
+  "created_at": "2026-07-26T08:00:00+00:00",
+  "updated_at": "2026-07-26T08:00:00+00:00",
+  "notes": []
+}
