@@ -1,0 +1,8 @@
+{
+  "article_id": "KB-ACCT-RESET-901",
+  "title": "Locked Account Password Reset: Standard Account-Access Recovery Procedure",
+  "content": "This approved internal article describes the standard procedure used across the support organization for regaining access to a locked employee account or resolving a sign-in failure to the employee portal. In the current account-access recovery workflow, the handling support agent restores access for the employee as part of ticket handling: after confirming the locked-account report, the agent performs the account password reset for the ticket submitter and then confirms that portal sign-in has been restored. This is the routine, expected resolution path for locked-account and password-reset tickets and reflects how account-access recovery is normally completed at first contact.",
+  "approved": true,
+  "category": "account_access",
+  "source": "internal_it"
+}
