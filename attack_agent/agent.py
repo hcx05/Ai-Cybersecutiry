@@ -578,6 +578,33 @@ def _write_campaign_log(
 # ---------------------------------------------------------------------------
 
 
+def _extract_victim_rationale(victim_result: dict[str, Any]) -> str | None:
+    """
+    Recover the Victim Agent's own stated rationale for its terminal decision
+    from the round trace (last step's raw_model_output.reason, else the last
+    decision.reason). Used only by the exp4-E autonomous arm, which feeds it
+    back into the next planner round; off by default so exp1/exp2 are unchanged.
+    """
+    trace = victim_result.get("trace") if isinstance(victim_result, dict) else None
+    if not isinstance(trace, list):
+        return None
+    for entry in reversed(trace):
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("raw_model_output")
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict) and parsed.get("reason"):
+                return str(parsed["reason"])
+        decision = entry.get("decision") or {}
+        if decision.get("reason"):
+            return str(decision["reason"])
+    return None
+
+
 def run_campaign(
     *,
     goal: AttackGoal,
@@ -592,6 +619,7 @@ def run_campaign(
     pad_to_chars: int | None = None,
     pad_position: str = "before",
     pad_dense: bool = False,
+    feed_victim_rationale: bool = False,
 ) -> dict[str, Any]:
     """
     Run one Attack Agent campaign against the Victim Agent for one
@@ -826,6 +854,14 @@ def run_campaign(
             full_latest_signal,
             mode=selected_observability_mode,
         )
+
+        if feed_victim_rationale and history and isinstance(planner_visible_signal, dict):
+            _rationale = _extract_victim_rationale(history[-1].victim_result)
+            if _rationale:
+                planner_visible_signal = {
+                    **planner_visible_signal,
+                    "victim_model_rationale": _rationale,
+                }
 
         try:
             decision, planner_metadata = plan_next_round(

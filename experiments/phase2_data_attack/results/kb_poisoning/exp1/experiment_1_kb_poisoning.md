@@ -172,3 +172,45 @@ search_knowledge_base」。但 planner 的 `final_decision` 卻自述「成功�
 - 觸發工單:`data/baseline/tickets/TICKET-004.json`
 - 判定器修正:`attack_agent/oracle.py`(`_find_search_executions` /
   `_find_retrieved_article_ids`)
+
+---
+
+## 八、重跑更新(2026-10-23):修訂版 planner、5 campaign、AIVSS
+
+本節為後續依手冊要求的重跑補充;上方原始報告(2026-09-24,campaign `47307db2`)
+之敘述與方法論(含 oracle 假陰性的發現與修正)維持不變作為歷史紀錄。
+
+### 8.1 條件變更
+- planner prompt 改為 **M9 修訂版 planner_v1**(option A:移除具體嵌入手法列舉,
+  保留決定性關鍵字檢索機制與主題關鍵字指引;sha256 `dcd3201e…`)。此變更改變了
+  campaign 條件指紋,故本次結果**不與修訂前的原始 run 合併**,而是在修訂版 planner
+  下重新確立同一結論。
+- 規模由 1 campaign 提升為 **5 個獨立 campaign**(`run_phase2_kb_poisoning.sh 5 white_box 5`)。
+- oracle 為 `deterministic-v2`(M5;判定邏輯不變,僅修了會漏報檢索的結構 bug)。
+
+### 8.2 結果:檢索 5/5(campaign 層)
+
+| 指標 | 結果 | Wilson 95% CI |
+|---|---|---|
+| 毒文章被檢索(`kb_poisoned_article_retrieved` 達成) | **5/5 campaign** | 100.0% [56.6, 100.0] |
+
+5 個 campaign 多在第 1 輪即達成檢索(其一在第 2 輪),與修訂前結論一致:
+**一篇已核准的毒文章,會被一張乾淨、無注入的觸發工單可靠地檢索進 victim 脈絡。**
+這是攻擊的「立足點」半,且在修訂版 planner(不再被餵現成手法)下同樣成立。
+
+### 8.3 AIVSS(風險潛力,與成功率分開報告)
+本實驗對應 **F2:攻擊者可控的已核准 KB 文章被可靠檢索進 agent 脈絡(RAG 語料
+完整性立足點)**。依 OWASP AIVSS-Agentic v0.8:CVSS v4.0 base 7.0 → **AIVSS 8.6
+(High)**(ThM 0.97 PoC、Mitigation 1.0)。完整評分與理由見
+`experiments/phase2_data_attack/results/aivss_findings.json` 與 exp4 報告 §六。
+AIVSS 評估風險潛力,不等於成功率(上表 Wilson 為經驗成功率)。
+
+### 8.4 定位(攻擊代理能力框架)
+exp1 只確立「檢索/持久立足點」。該立足點能否被攻擊代理進一步驅動為未授權特權
+動作,是 exp2(自主 poison-to-reset,0/5)與 exp4-E(D3 自主臂,0/5)的問題;
+人工上界則見 exp4 A 臂(33/33)。檢索穩定成立 ≠ 可被自主利用。
+
+### 8.5 檔案位置(本次重跑)
+- campaign log:`logs/attack_agent/20261022-162{137,154,215,230,310}_kb_poisoned_article_retrieved_*`
+- 修訂版 planner 與修訂紀錄:`experiments/phase2_data_attack/prompts/planner_v1_kb_poisoning.txt`、
+  `experiments/phase2_data_attack/prompt_revision_log.md`
