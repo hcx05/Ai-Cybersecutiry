@@ -6,3 +6,7 @@
 # Keep this file intentionally empty until a runtime package is actually
 # imported by production code. Do not add prospective dependencies such as
 # chromadb, ollama, pydantic, or requests before they are needed.
+
+# AIVSS scoring (OWASP AIVSS-Agentic v0.8) uses the CVSS v4.0 base score as
+# input; see experiments/phase2_data_attack/aivss_findings.py and controller/aivss.py.
+cvss>=3.6
