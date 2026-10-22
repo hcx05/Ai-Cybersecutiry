@@ -1,229 +1,186 @@
 """
-AIVSS scoring for Phase 2 findings.
+OWASP AIVSS-Agentic scoring (official methodology).
 
-Two layers, both deterministic and open to audit:
+Implemented from the official specification:
+  OWASP "AIVSS Scoring System For OWASP Agentic AI Core Security Risks v0.8"
+  source: https://aivss.owasp.org/assets/publications/
+          AIVSS%20Scoring%20System%20For%20OWASP%20Agentic%20AI%20Core%20Security%20Risks%20v0.8.pdf
+  sha256: a2abbd215f0d7790d273c30a893a09c0dc37a6c109765eb0363c01af897fd9af
 
-  1. CVSS v3.1 Base Score -- computed exactly per the FIRST CVSS v3.1
-     specification (the Roundup, Impact, Exploitability and Base formulae are
-     reproduced verbatim). Given a base metric vector it is fully deterministic.
+This is NOT CVSS. Per spec section 3.1.1 the AIVSS baseline is the CVSS v4.0
+Base Score, taken here as a numeric INPUT (the spec treats CVSS_Base as an
+input/intermediate, section 3.5); the finding records the CVSS:4.0 vector and
+the base score obtained from the FIRST v4.0 calculator alongside it.
 
-  2. An agentic-AI factor overlay following the OWASP AIVSS methodology: named
-     agentic risk factors scored on 0..1, aggregated into an Agentic AI Risk
-     Score (AARS, 0..10), then blended 50/50 with the CVSS base score to give a
-     Final AIVSS Score (0..10).
+Equations (spec sections 3.3-3.5):
+  Risk_Gap   = 10 - CVSS_Base
+  Factor_Sum = sum of the 10 agentic factors, each in {0.0, 0.5, 1.0}
+  AARS       = Risk_Gap * (Factor_Sum / 10) * ThM            (section 3.3.1)
+  AIVSS_raw  = (CVSS_Base + AARS) * Mitigation_Factor        (section 3.4)
+  AIVSS      = RoundHalfUp(AIVSS_raw, 1)                      (section 3.5.1)
 
-Integrity note: this run does not download the OWASP AIVSS document, so the
-blend weight (`CVSS_AARS_BLEND`) and the per-factor weights (`AARS_WEIGHTS`)
-are recorded here as explicit, versioned constants (`AIVSS_METHODOLOGY`). Every
-score is therefore reproducible from its input vector and these constants, and
-nothing is presented as an official OWASP figure that was not computed here from
-these stated inputs. The CVSS base layer is standalone and authoritative; the
-agentic overlay is labelled with its methodology version wherever it is shown.
+Validated against the spec's own worked examples (section 3.6 / Table 5):
+  3.6.1  CVSS 9.4, FactorSum 9.0 -> AARS 0.5238 -> AIVSS 9.9 (Critical)
+  3.6.2  CVSS 8.7, FactorSum 8.0 -> AIVSS 9.7 (Critical)
+  3.6.6  CVSS 5.8, FactorSum 7.5 -> AIVSS 8.9 (High)
+  3.6.10 CVSS 2.1, FactorSum 6.5 -> AIVSS 7.1 (High)
 """
 
 from __future__ import annotations
 
-import math
-
-from dataclasses import dataclass, field
-
-
-AIVSS_METHODOLOGY = "aivss-local-v0"
-CVSS_VERSION = "3.1"
-
-# ---------------------------------------------------------------------------
-# CVSS v3.1 Base metric weights (FIRST CVSS v3.1 specification, section 7.1).
-# ---------------------------------------------------------------------------
-_AV = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
-_AC = {"L": 0.77, "H": 0.44}
-# Privileges Required is scope-dependent: (unchanged, changed).
-_PR = {"N": (0.85, 0.85), "L": (0.62, 0.68), "H": (0.27, 0.5)}
-_UI = {"N": 0.85, "R": 0.62}
-_CIA = {"H": 0.56, "L": 0.22, "N": 0.0}
-_SCOPE = {"U", "C"}
-
-_METRIC_ORDER = ("AV", "AC", "PR", "UI", "S", "C", "I", "A")
-_METRIC_DOMAINS = {
-    "AV": set(_AV),
-    "AC": set(_AC),
-    "PR": set(_PR),
-    "UI": set(_UI),
-    "S": _SCOPE,
-    "C": set(_CIA),
-    "I": set(_CIA),
-    "A": set(_CIA),
-}
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 
 
-def _roundup(value: float) -> float:
-    """CVSS v3.1 Appendix A Roundup: ceil to one decimal place, FP-safe."""
+AIVSS_SPEC_VERSION = "v0.8"
+AIVSS_SPEC_SHA256 = (
+    "a2abbd215f0d7790d273c30a893a09c0dc37a6c109765eb0363c01af897fd9af"
+)
+AIVSS_SPEC_SOURCE = (
+    "https://aivss.owasp.org/assets/publications/"
+    "AIVSS%20Scoring%20System%20For%20OWASP%20Agentic%20AI%20"
+    "Core%20Security%20Risks%20v0.8.pdf"
+)
 
-    int_input = round(value * 100000)
-    if int_input % 10000 == 0:
-        return int_input / 100000.0
-    return (math.floor(int_input / 10000) + 1) / 10.0
+# The 10 Risk Amplification Factors, in the exact vector order of spec 2.2.
+FACTORS = (
+    "autonomy",         # 1. Execution Autonomy
+    "tools",            # 2. External Tool Control Surface
+    "language",         # 3. Natural Language Interface
+    "context",          # 4. Contextual Awareness
+    "non_determinism",  # 5. Behavioral Non-Determinism
+    "opacity",          # 6. Opacity & Reflexivity
+    "persistence",      # 7. Persistent State Retention
+    "identity",         # 8. Dynamic Identity
+    "multi_agent",      # 9. Multi-Agent Interactions
+    "self_mod",         # 10. Self-Modification
+)
+
+_ALLOWED_FACTOR_VALUES = {0.0, 0.5, 1.0}
+
+# Threat Multiplier, spec Table 4a (section 3.3.2). Default = PoC (0.97).
+THREAT_MULTIPLIER = {"attacked": 1.00, "poc": 0.97, "unreported": 0.50}
+THM_DEFAULT = 0.97
+
+# Mitigation Factor, spec Table 4b (section 3.4.1). Default = no/weak (1.00).
+MITIGATION_FACTOR = {"none": 1.00, "partial": 0.83, "strong": 0.67}
+MITIGATION_DEFAULT = 1.00
 
 
-def severity_rating(score: float) -> str:
-    """CVSS v3.1 qualitative severity rating scale (section 5)."""
+def round_half_up_tenth(value: float) -> float:
+    """RoundHalfUp to the nearest tenth (spec 3.5.1: 8.64->8.6, 8.65->8.7)."""
+
+    return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def severity_band(score: float) -> str:
+    """AIVSS severity bands (spec 3.5.2)."""
 
     if score <= 0.0:
         return "None"
     if score < 4.0:
-        return "Low"
+        return "Low"       # 0.1 - 3.9
     if score < 7.0:
-        return "Medium"
+        return "Medium"    # 4.0 - 6.9
     if score < 9.0:
-        return "High"
-    return "Critical"
+        return "High"      # 7.0 - 8.9
+    return "Critical"      # 9.0 - 10.0
 
 
-def parse_cvss_vector(vector: str) -> dict:
-    """Parse an 'AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H' base vector into a dict.
-
-    An optional leading 'CVSS:3.1/' prefix is accepted. Only the eight Base
-    metrics are read; raises ValueError on a missing metric or bad value.
-    """
-
-    text = vector.strip()
-    if text.upper().startswith("CVSS:"):
-        text = text.split("/", 1)[1] if "/" in text else ""
-    metrics: dict[str, str] = {}
-    for part in text.split("/"):
-        part = part.strip()
-        if not part:
-            continue
-        if ":" not in part:
-            raise ValueError(f"malformed metric segment: {part!r}")
-        key, _, val = part.partition(":")
-        key, val = key.strip().upper(), val.strip().upper()
-        if key in _METRIC_ORDER:
-            metrics[key] = val
-    for key in _METRIC_ORDER:
-        if key not in metrics:
-            raise ValueError(f"missing base metric {key} in vector {vector!r}")
-        if metrics[key] not in _METRIC_DOMAINS[key]:
-            raise ValueError(f"invalid value {metrics[key]!r} for metric {key}")
-    return metrics
-
-
-def cvss_v31_base(vector: str | dict) -> dict:
-    """Compute the CVSS v3.1 Base Score from a base metric vector.
-
-    Returns {score, severity, vector, version}. Deterministic.
-    """
-
-    m = parse_cvss_vector(vector) if isinstance(vector, str) else {
-        k.upper(): str(v).upper() for k, v in vector.items()
-    }
-    # Re-validate when a dict was supplied.
-    for key in _METRIC_ORDER:
-        if m.get(key) not in _METRIC_DOMAINS[key]:
-            raise ValueError(f"invalid/missing base metric {key}: {m.get(key)!r}")
-
-    scope_changed = m["S"] == "C"
-    iss = 1.0 - (
-        (1.0 - _CIA[m["C"]]) * (1.0 - _CIA[m["I"]]) * (1.0 - _CIA[m["A"]])
-    )
-    if scope_changed:
-        impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
-    else:
-        impact = 6.42 * iss
-
-    pr = _PR[m["PR"]][1 if scope_changed else 0]
-    exploitability = 8.22 * _AV[m["AV"]] * _AC[m["AC"]] * pr * _UI[m["UI"]]
-
-    if impact <= 0:
-        score = 0.0
-    elif scope_changed:
-        score = _roundup(min(1.08 * (impact + exploitability), 10.0))
-    else:
-        score = _roundup(min(impact + exploitability, 10.0))
-
-    canonical = "/".join(f"{k}:{m[k]}" for k in _METRIC_ORDER)
-    return {
-        "score": score,
-        "severity": severity_rating(score),
-        "vector": f"CVSS:{CVSS_VERSION}/{canonical}",
-        "version": CVSS_VERSION,
-        "impact_subscore": round(impact, 4),
-        "exploitability_subscore": round(exploitability, 4),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Agentic AI Risk Score (AARS) overlay -- OWASP AIVSS methodology.
-# Each factor is scored on 0..1 for the finding; the weighted mean is scaled to
-# 0..10. Weights and the final blend are recorded constants so the Final AIVSS
-# Score is reproducible from the factor vector alone.
-# ---------------------------------------------------------------------------
-AARS_FACTORS = (
-    "autonomy",          # agent acts without a human in the loop per action
-    "tool_use",          # exploit routes through the agent's privileged tools
-    "non_determinism",   # outcome varies run-to-run (LLM sampling)
-    "memory_persistence",  # poisoned state persists across sessions/tickets
-    "multi_agent",       # exploit crosses agent boundaries
-    "adaptability",      # agent re-plans in response to defender feedback
-)
-
-AARS_WEIGHTS = {
-    "autonomy": 0.25,
-    "tool_use": 0.25,
-    "non_determinism": 0.15,
-    "memory_persistence": 0.15,
-    "multi_agent": 0.10,
-    "adaptability": 0.10,
-}
-
-# Final AIVSS = blend * CVSS_base + (1 - blend) * AARS, both on 0..10.
-CVSS_AARS_BLEND = 0.5
-
-
-def agentic_risk_score(factors: dict) -> dict:
-    """Weighted agentic AI risk score (0..10) from per-factor values in 0..1."""
-
-    missing = [f for f in AARS_FACTORS if f not in factors]
+def _validate_factors(factors: dict) -> None:
+    missing = [f for f in FACTORS if f not in factors]
     if missing:
         raise ValueError(f"missing agentic factors: {missing}")
+    unknown = [f for f in factors if f not in FACTORS]
+    if unknown:
+        raise ValueError(f"unknown agentic factors: {unknown}")
     for name, value in factors.items():
-        if name not in AARS_WEIGHTS:
-            raise ValueError(f"unknown agentic factor: {name!r}")
-        if not (0.0 <= float(value) <= 1.0):
-            raise ValueError(f"factor {name} out of range 0..1: {value!r}")
-    weighted = sum(AARS_WEIGHTS[f] * float(factors[f]) for f in AARS_FACTORS)
-    total_weight = sum(AARS_WEIGHTS.values())
-    aars_unit = weighted / total_weight
-    return {
-        "aars": round(aars_unit * 10.0, 1),
-        "aars_unit": round(aars_unit, 4),
-        "factors": {f: float(factors[f]) for f in AARS_FACTORS},
-        "weights": dict(AARS_WEIGHTS),
-    }
+        if float(value) not in _ALLOWED_FACTOR_VALUES:
+            raise ValueError(
+                f"factor {name}={value!r} must be one of 0.0, 0.5, 1.0 (spec 2.1)"
+            )
+
+
+def factor_sum(factors: dict) -> float:
+    """Sum of the 10 factors (spec 3.3.1); each in {0.0, 0.5, 1.0}, max 10.0."""
+
+    _validate_factors(factors)
+    return float(sum(float(factors[f]) for f in FACTORS))
+
+
+def _resolve_thm(thm) -> float:
+    if isinstance(thm, str):
+        key = thm.strip().lower()
+        if key not in THREAT_MULTIPLIER:
+            raise ValueError(f"unknown threat maturity {thm!r}")
+        return THREAT_MULTIPLIER[key]
+    return float(thm)
+
+
+def _resolve_mitigation(mitigation) -> float:
+    if isinstance(mitigation, str):
+        key = mitigation.strip().lower()
+        if key not in MITIGATION_FACTOR:
+            raise ValueError(f"unknown mitigation strength {mitigation!r}")
+        return MITIGATION_FACTOR[key]
+    return float(mitigation)
+
+
+def aars(cvss_base: float, factors: dict, thm=THM_DEFAULT) -> float:
+    """Agentic AI Risk Score uplift, raw (unrounded), spec 3.3.1."""
+
+    if not (0.0 <= float(cvss_base) <= 10.0):
+        raise ValueError(f"cvss_base out of range 0..10: {cvss_base!r}")
+    risk_gap = 10.0 - float(cvss_base)
+    return risk_gap * (factor_sum(factors) / 10.0) * _resolve_thm(thm)
+
+
+def aivss(
+    cvss_base: float,
+    factors: dict,
+    thm=THM_DEFAULT,
+    mitigation=MITIGATION_DEFAULT,
+) -> float:
+    """Final AIVSS score, rounded to the nearest tenth (spec 3.4 + 3.5.1)."""
+
+    uplift = aars(cvss_base, factors, thm=thm)
+    raw = (float(cvss_base) + uplift) * _resolve_mitigation(mitigation)
+    raw = min(10.0, max(0.0, raw))
+    return round_half_up_tenth(raw)
 
 
 @dataclass
 class AivssScore:
     name: str
-    cvss: dict
-    aars: dict
-    final_score: float
+    cvss_base: float
+    cvss_vector: str          # the CVSS:4.0 vector string (recorded input)
+    factors: dict
+    thm: float
+    mitigation: float
+    factor_sum: float
+    aars_raw: float
+    aivss_score: float
     severity: str
-    methodology: str = AIVSS_METHODOLOGY
+    spec_version: str = AIVSS_SPEC_VERSION
+    spec_sha256: str = AIVSS_SPEC_SHA256
     notes: str = ""
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
-            "methodology": self.methodology,
-            "cvss_version": CVSS_VERSION,
-            "cvss_base_score": self.cvss["score"],
-            "cvss_base_severity": self.cvss["severity"],
-            "cvss_vector": self.cvss["vector"],
-            "agentic_risk_score": self.aars["aars"],
-            "agentic_factors": self.aars["factors"],
-            "cvss_aars_blend": CVSS_AARS_BLEND,
-            "final_aivss_score": self.final_score,
-            "final_aivss_severity": self.severity,
+            "framework": "OWASP AIVSS-Agentic",
+            "spec_version": self.spec_version,
+            "spec_sha256": self.spec_sha256,
+            "spec_source": AIVSS_SPEC_SOURCE,
+            "cvss_v4_base": self.cvss_base,
+            "cvss_v4_vector": self.cvss_vector,
+            "agentic_factors": {f: float(self.factors[f]) for f in FACTORS},
+            "factor_sum": self.factor_sum,
+            "threat_multiplier": self.thm,
+            "mitigation_factor": self.mitigation,
+            "aars_uplift": round(self.aars_raw, 4),
+            "aivss_score": self.aivss_score,
+            "aivss_severity": self.severity,
             "notes": self.notes,
         }
 
@@ -231,26 +188,36 @@ class AivssScore:
 def score_finding(
     *,
     name: str,
-    cvss_vector: str | dict,
+    cvss_base: float,
+    cvss_vector: str,
     agentic_factors: dict,
+    thm=THM_DEFAULT,
+    mitigation=MITIGATION_DEFAULT,
     notes: str = "",
 ) -> AivssScore:
-    """Score one finding end-to-end: CVSS base + AARS -> Final AIVSS Score."""
+    """Score one finding end-to-end per the official AIVSS v0.8 methodology.
 
-    cvss = cvss_v31_base(cvss_vector)
-    aars = agentic_risk_score(agentic_factors)
-    final = _roundup(
-        min(
-            CVSS_AARS_BLEND * cvss["score"]
-            + (1.0 - CVSS_AARS_BLEND) * aars["aars"],
-            10.0,
-        )
-    )
+    cvss_base / cvss_vector are the CVSS v4.0 base score and vector string
+    (obtained from the FIRST v4.0 calculator) recorded as the baseline input.
+    """
+
+    if not (isinstance(cvss_vector, str) and cvss_vector.upper().startswith("CVSS:4.0")):
+        raise ValueError(f"cvss_vector must be a CVSS:4.0 vector string: {cvss_vector!r}")
+    thm_v = _resolve_thm(thm)
+    mit_v = _resolve_mitigation(mitigation)
+    fs = factor_sum(agentic_factors)
+    uplift = aars(cvss_base, agentic_factors, thm=thm_v)
+    score = aivss(cvss_base, agentic_factors, thm=thm_v, mitigation=mit_v)
     return AivssScore(
         name=name,
-        cvss=cvss,
-        aars=aars,
-        final_score=final,
-        severity=severity_rating(final),
+        cvss_base=float(cvss_base),
+        cvss_vector=cvss_vector,
+        factors={f: float(agentic_factors[f]) for f in FACTORS},
+        thm=thm_v,
+        mitigation=mit_v,
+        factor_sum=fs,
+        aars_raw=uplift,
+        aivss_score=score,
+        severity=severity_band(score),
         notes=notes,
     )
