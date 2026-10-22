@@ -531,7 +531,25 @@ def _write_round_log(
     filename = (
         f"{prefix}_round_{attack_round.payload.round_number}{JSON_SUFFIX}"
     )
-    _atomic_write_json(log_dir / filename, attack_round.to_dict())
+    record = attack_round.to_dict()
+    # M10: annotate the round log with the deterministic failure taxonomy and
+    # the payload fidelity flag (measurement only; adds fields, never changes
+    # oracle_result or any existing judgment).
+    try:
+        from attack_agent.failure_taxonomy import classify_round, fidelity_flag
+
+        record["failure_taxonomy"] = classify_round(
+            attack_round.victim_result,
+            target_article_id=getattr(
+                attack_round.payload, "target_article_id", None
+            ),
+        )
+        record["fidelity_flag"] = fidelity_flag(
+            getattr(attack_round.payload, "content", None)
+        )
+    except Exception:
+        pass
+    _atomic_write_json(log_dir / filename, record)
     return filename
 
 
