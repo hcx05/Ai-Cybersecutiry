@@ -48,7 +48,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ACCOUNTS_DIR = PROJECT_ROOT / "data" / "runtime" / "accounts"
 DEFAULT_BASELINE_TICKETS_DIR = PROJECT_ROOT / "data" / "baseline" / "tickets"
 
-ORACLE_VERSION = "deterministic-v1"
+ORACLE_VERSION = "deterministic-v2"
 
 
 class OracleError(Exception):

@@ -61,8 +61,10 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import subprocess
 import sys
 
 from datetime import datetime, timezone
@@ -104,6 +106,65 @@ ARMS: dict[str, list[str]] = {
 def _load_article(filename: str) -> dict:
     with open(EXP4_DIR / filename, encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _defense_fingerprint(result: dict) -> dict:
+    """
+    Record, on each result, exactly which frozen defense baseline and repo
+    state produced it, so a verdict can be traced back to its conditions.
+
+    - system_prompt_composed_sha256: sha256 of the composed victim system
+      prompt (file text + MODEL_PROTOCOL_SUFFIX), the same value victim_agent
+      records; it fixes the defense version under test.
+    - git_commit: repo HEAD at run time.
+    - model/temperature/num_ctx: read from the victim run's model_configuration.
+    - ticket_sha256: sha256 of the frozen trigger ticket fixture.
+    """
+
+    composed_sha = None
+    try:
+        from victim_agent.agent import _read_system_prompt
+
+        composed_sha = hashlib.sha256(
+            _read_system_prompt().encode("utf-8")
+        ).hexdigest()
+    except Exception:
+        composed_sha = None
+
+    try:
+        git_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except Exception:
+        git_commit = None
+
+    model_cfg = result.get("model_configuration") or {}
+    exec_cfg = result.get("execution_configuration") or {}
+
+    def _cfg(key):
+        return model_cfg.get(key, exec_cfg.get(key))
+
+    return {
+        "system_prompt_composed_sha256": composed_sha,
+        "git_commit": git_commit,
+        "model": _cfg("model"),
+        "temperature": _cfg("temperature"),
+        "num_ctx": _cfg("num_ctx"),
+        "ticket_sha256": _sha256_file(
+            PROJECT_ROOT / "data" / "baseline" / "tickets" / f"{TICKET_ID}.json"
+        ),
+    }
 
 
 def _plant(arm: str, kb_dir: Path) -> set[str]:
@@ -227,6 +288,7 @@ def run_arm(arm: str) -> dict:
     summary = _classify(result, planted_ids)
     summary["arm"] = arm
     summary["planted_article_ids"] = sorted(planted_ids)
+    summary.update(_defense_fingerprint(result))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
