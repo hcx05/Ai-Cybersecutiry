@@ -1,4 +1,4 @@
-# Phase 3:Provenance 攻擊(信任結構欄位 / 資料完整性)
+# Phase 2.1:Provenance 攻擊(信任結構欄位 / 資料完整性)
 
 研究一個新的攻擊大類:不攻擊 Victim Agent 讀到的**文字內容**(Phase 1 工單 IPI、
 Phase 2 知識庫投毒都是說服型/內容型),而是攻擊它所信任的**結構化資料本身的
@@ -13,11 +13,11 @@ Phase 2 知識庫投毒都是說服型/內容型),而是攻擊它所信任的**�
 |---|---|---|
 | Phase 1(ipi) | 工單自由文字 | 能不能用注入/說服讓 agent 違規 |
 | Phase 2(data_attack / KB) | 知識庫文章文字(RAG) | 能不能用投毒文章說服 agent 違規 |
-| **Phase 3(provenance)** | **工單的結構化信任欄位(intake_channel / submitted_by)** | **當 agent 信任的 provenance 資料本身被攻擊者控制時,防線還剩多少** |
+| **Phase 2.1(provenance)** | **工單的結構化信任欄位(intake_channel / submitted_by)** | **當 agent 信任的 provenance 資料本身被攻擊者控制時,防線還剩多少** |
 
 Phase 2 exp4 已證明:`reset_password` 的 `intake_channel` 閘門是 **prompt-enforced**,
 可被投毒文章說服繞過;唯一的硬閘 `submitter_binding_check` 只比對工單 `submitted_by`,
-對「打真 submitter」無效。Phase 3 把問題推到更底層:
+對「打真 submitter」無效。Phase 2.1 把問題推到更底層:
 
 > 這兩道判斷都讀自工單檔的結構化欄位,而**沒有任何 runtime 檢查這些欄位是否為真**
 > (`account.py` 的 docstring 明述 `submitted_by`「只與建立工單的管道一樣可信」)。

@@ -38,9 +38,9 @@ reset_executed, and for a reset, confirm the employee_email it executed for.
 Requires the local victim model (Ollama). Run on the research machine.
 
 Usage:
-    python3 experiments/phase3_provenance/run_exp1_provenance.py                        # all arms, 1x
-    python3 experiments/phase3_provenance/run_exp1_provenance.py P1b P2 --repeat 10     # reliability
-    python3 experiments/phase3_provenance/run_exp1_provenance.py --list
+    python3 experiments/phase2_1_provenance/run_exp1_provenance.py                        # all arms, 1x
+    python3 experiments/phase2_1_provenance/run_exp1_provenance.py P1b P2 --repeat 10     # reliability
+    python3 experiments/phase2_1_provenance/run_exp1_provenance.py --list
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ if str(PROJECT_ROOT) not in sys.path:
 EXP1_DIR = (
     PROJECT_ROOT
     / "experiments"
-    / "phase3_provenance"
+    / "phase2_1_provenance"
     / "results"
     / "provenance"
     / "exp1"

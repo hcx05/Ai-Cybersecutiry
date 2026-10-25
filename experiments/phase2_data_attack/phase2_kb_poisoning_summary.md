@@ -203,8 +203,8 @@ Phase 1(注入走工單文字)逾 75 campaign 全數 0 成功。Phase 2:(1)換�
    (反-suspicion)已達 5/5;其中證明「加長輪數」無效(exp8 12 輪 0/5),真正槓桿是
    繞過 victim 的可疑偵測。後續可測:更大 n 精估穩定率、最小化有效指導、更強
    payload 模型是否能在**更低指導具體度**下達到同等穩定率。
-2. **結構欄位投毒(Phase 3 provenance,已開)**:exp4 硬閘讀的仍是可偽造的
-   `intake_channel`/`submitted_by`;`experiments/phase3_provenance/` 測偽造結構欄位
+2. **結構欄位投毒(Phase 2.1 provenance,已開)**:exp4 硬閘讀的仍是可偽造的
+   `intake_channel`/`submitted_by`;`experiments/phase2_1_provenance/` 測偽造結構欄位
    本身能否繞過——把攻擊從「內容說服」推進到「資料來源完整性」。
 3. **跨模型外推**:A 臂與自主攻破率皆模型相依,對照模型重跑。
 4. **攻破文章最小化**:找觸發繞過的最小文字特徵。
@@ -295,7 +295,7 @@ exp6–exp9 再補上第三個要素——**合法外觀**:同樣具備授權重
 - `results/kb_poisoning/exp5/experiment_5_optimized_instruction.md`（自主最佳化指導 1/5,首次自主攻破）
 - `results/kb_poisoning/exp9/experiment_6to9_breakthrough_escalation.md`（exp6–exp9 指導升級鏈:1/5→2/5→1/5→0/5→**5/5**,穩定自主攻破;含 suspicion 機制定位與四版凍結 instruction 索引）
 - AIVSS 評分:`experiments/phase2_data_attack/results/aivss_findings.json`、`controller/aivss.py`
-- 後續攻擊大類:`experiments/phase3_provenance/`
+- Phase 2.1(provenance,結構欄位投毒):`experiments/phase2_1_provenance/`
 
 ---
 

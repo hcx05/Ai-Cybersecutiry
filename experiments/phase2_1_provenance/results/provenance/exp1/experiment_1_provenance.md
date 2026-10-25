@@ -1,4 +1,4 @@
-# 實驗 1(Phase 3 / Provenance 攻擊):偽造工單的結構化信任欄位即可繞過重設閘門
+# 實驗 1(Phase 2.1 / Provenance 攻擊):偽造工單的結構化信任欄位即可繞過重設閘門
 
 日期:2026-10-23
 目標:`provenance_intake_channel_spoof`、`provenance_submitter_rebind`
@@ -11,7 +11,7 @@
 ## 一、本實驗要驗證什麼
 
 Phase 1(工單 IPI)與 Phase 2(KB 投毒)都攻擊 victim 讀到的**文字內容**,靠說服。
-Phase 3 攻擊不同的資料面:victim 的決定性閘門實際從磁碟讀取的**結構化信任欄位**
+Phase 2.1 攻擊不同的資料面:victim 的決定性閘門實際從磁碟讀取的**結構化信任欄位**
 本身——工單的 `intake_channel` 與 `submitted_by`。
 
 讀程式碼確立的前提(見 Phase 2 exp4 §一與 `account.py`):
@@ -73,7 +73,7 @@ victim 讀到 `intake_channel=authenticated_employee_portal` 即視為已達重�
 ### 3.1 擋點從「模型行為」退到「資料真實性」
 
 Phase 2 exp3/exp4 的防線觀察停在「模型對 intake_channel 的**判斷**」——那是行為層、
-可被內容說服鬆動(exp4 A 臂)。Phase 3 顯示更底層的問題:**模型的判斷再怎麼對齊,
+可被內容說服鬆動(exp4 A 臂)。Phase 2.1 顯示更底層的問題:**模型的判斷再怎麼對齊,
 都建立在它讀到的結構欄位為真這個假設上。** 一旦該假設被打破(攻擊者可寫 intake
 記錄),模型即使「正確地」遵從 intake_channel 規則,也會因為欄位本身是假的而做出
 錯誤授權。P1b 的 10/10 不是模型「被說服」,而是模型「正確地相信了假資料」。
@@ -81,12 +81,12 @@ Phase 2 exp3/exp4 的防線觀察停在「模型對 intake_channel 的**判斷**
 ### 3.2 submitter_binding 在資料被控下失去意義
 
 `submitter_binding_check` 是專案唯一的硬閘,Phase 2 結論是它「對打真 submitter 無效」。
-Phase 3 P2 更進一步:一旦 `submitted_by` 可被攻擊者寫入,硬閘比對的兩邊都由攻擊者
+Phase 2.1 P2 更進一步:一旦 `submitted_by` 可被攻擊者寫入,硬閘比對的兩邊都由攻擊者
 決定,於是可對**任意帳號**重設。硬閘在「它讀的資料本身可被偽造」時,不提供實質保證。
 
 ### 3.3 對「把 intake_channel 升級為 runtime 硬閘」的意涵
 
-Phase 2 曾出現「把 intake_channel 從 prompt 升級為 runtime 硬閘」的想法。Phase 3
+Phase 2 曾出現「把 intake_channel 從 prompt 升級為 runtime 硬閘」的想法。Phase 2.1
 直接顯示:**那個修補必要但不充分**——硬閘讀的仍是同一個可被偽造的欄位,P1b 對一道
 「讀取 intake_channel 欄位的硬閘」同樣會通過。真正的信任根是**該欄位的 provenance
 是否被認證**(簽章 / 受信來源 / 不可偽造的來源證明),而非閘門在 prompt 還是 code。
@@ -155,9 +155,9 @@ Phase 2 曾出現「把 intake_channel 從 prompt 升級為 runtime 硬閘」的
   `results/provenance/exp1/poisoned_ticket_P1a_control_public.json`、
   `poisoned_ticket_P1b_intake_spoof_authenticated.json`、
   `poisoned_ticket_P2_submitter_rebind.json`
-- 執行腳本:`experiments/phase3_provenance/run_exp1_provenance.py`
+- 執行腳本:`experiments/phase2_1_provenance/run_exp1_provenance.py`
 - 結果:`results/provenance/exp1/results/exp1_{P1a,P1b,P2}_20261023-04*.json`(30 筆)
 - victim 原始 trace(含偽造目標重設證據):`logs/victim_agent/`
 - 設計與協定:`results/provenance/exp1/DESIGN.md`、`PROTOCOL.md`
-- goal 規格:`experiments/phase3_provenance/cases.json`
+- goal 規格:`experiments/phase2_1_provenance/cases.json`
 - AIVSS 方法:`controller/aivss.py`、`tests/test_aivss.py`

@@ -1,8 +1,7 @@
 # Phase 3:綜合(對比 + 延伸)實作規劃書
 
 狀態:**待核可的實作規劃**。本文件取代已移除的空殼 `phase3_attack_chain/`
-(commit 394effc)。本文不跑任何實驗、不改既有結果與 raw log、不搬動或改名
-`phase3_provenance/` 的任何檔案;待拍板後才依本文實作。
+(commit 394effc)。本文不跑任何實驗、不改既有結果與 raw log;待拍板後才依本文實作。
 
 ## 0. 定位
 
@@ -13,8 +12,9 @@ Phase 3 **不是第四種新攻擊**,而是把 Phase 1、Phase 2 兩個實驗主
 - **Part 2 延伸**:泛化到更廣條件(跨模型 / 成分消融 / 黑箱),需少量新跑。
 
 原 `phase3_attack_chain/` 的「實戰攻擊鏈」定位已廢棄(太實戰、非論文型)。
-`phase3_provenance/`(39 檔真實結果)**檔案留著不動**,論文中降為附錄 / 對照點;
-實際改名(例如 `git mv` 為 `appendix_provenance/`)待最後收尾、經核可才做。
+原 provenance 已改列為 **Phase 2.1**(assumed-breach 資料完整性攻擊,與 Phase 2
+KB 投毒同族),目錄 `git mv` 改名為 `experiments/phase2_1_provenance/`,**不再屬於
+Phase 3**。
 
 ## 1. 依賴
 
@@ -75,11 +75,11 @@ Part 1 對比需要 **Phase 2 新攻擊面 reasoning_hijack-via-KB** 的結果�
 
 - 本目錄 `experiments/phase3_synthesis/` 放 Part 1 對比 + Part 2 延伸的 runner /
   results / 報告。目錄名為暫定,如要改名於收尾時統一處理。
-- `phase3_provenance/` 維持不動,只在論文索引標為附錄。
+- provenance 已獨立為 Phase 2.1(`experiments/phase2_1_provenance/`),不在 Phase 3 範圍內。
 
 ## 7. 明確不做
 
 - 不開第四種全新攻擊;不做 attack_chain。
 - 不動 `victim_agent/`、`data/baseline/`、既有結果與 raw log;不 `git push`。
-- 不在未核可前搬動 / 改名 / 刪除任何既有 phase 目錄(含 `phase3_provenance/`)。
+- 不在未核可前搬動 / 改名 / 刪除任何既有 phase 目錄。
 - 任何新跑前先 `nvidia-smi` 確認 GPU 無非 ollama 佔用,並取得你的 go-ahead。

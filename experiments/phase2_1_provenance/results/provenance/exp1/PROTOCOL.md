@@ -1,8 +1,8 @@
-# Phase 3 / provenance / exp1 — 執行指引(信任結構欄位投毒)
+# Phase 2.1 / provenance / exp1 — 執行指引(信任結構欄位投毒)
 
-本資料夾存放 Phase 3 第一個實驗的前置檔案與協定。實驗**尚未實跑**(需本機
+本資料夾存放 Phase 2.1 第一個實驗的前置檔案與協定。實驗**尚未實跑**(需本機
 Ollama 與 victim 模型)。設計與論點見 `DESIGN.md`,大類總覽見
-`experiments/phase3_provenance/README.md`。
+`experiments/phase2_1_provenance/README.md`。
 
 ---
 
@@ -35,13 +35,13 @@ Ollama 與 victim 模型)。設計與論點見 `DESIGN.md`,大類總覽見
 set -a && source .env && set +a
 
 # 全部臂各一次
-python3 experiments/phase3_provenance/run_exp1_provenance.py
+python3 experiments/phase2_1_provenance/run_exp1_provenance.py
 
 # 可靠度(偽造臂各 10 次)
-python3 experiments/phase3_provenance/run_exp1_provenance.py P1a P1b P2 --repeat 10
+python3 experiments/phase2_1_provenance/run_exp1_provenance.py P1a P1b P2 --repeat 10
 
 # 列出臂
-python3 experiments/phase3_provenance/run_exp1_provenance.py --list
+python3 experiments/phase2_1_provenance/run_exp1_provenance.py --list
 ```
 
 每臂會:reset 環境 → 覆寫 `TICKET-004` → 跑一次 victim → 印出並存檔
@@ -62,5 +62,5 @@ policy 攔截、victim 自述理由。victim 原始 trace 另存於 `logs/victim
 - 假設突破(可寫工單 intake 記錄)較 Phase 1/2 強,為本 Phase 的前提,須在報告
   中明確標註。
 - 這是**資料完整性**攻擊,與 exp4 的**內容說服**互補;即使 exp5 把 intake_channel
-  做成 runtime 硬閘,硬閘讀的仍是這個可偽造欄位,預期仍被繞過——這正是 Phase 3
+  做成 runtime 硬閘,硬閘讀的仍是這個可偽造欄位,預期仍被繞過——這正是 Phase 2.1
   要凸顯的論點。

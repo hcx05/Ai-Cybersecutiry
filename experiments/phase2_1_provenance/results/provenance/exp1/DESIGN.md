@@ -1,7 +1,7 @@
-# Phase 3 / provenance / exp1 — 設計(信任結構欄位投毒)
+# Phase 2.1 / provenance / exp1 — 設計(信任結構欄位投毒)
 
-本資料夾存放 Phase 3(provenance 攻擊)第一個實驗的設計、被竄改的工單記錄與
-執行腳本。Phase 3 的總覽與威脅模型見上層 `experiments/phase3_provenance/README.md`。
+本資料夾存放 Phase 2.1(provenance 攻擊)第一個實驗的設計、被竄改的工單記錄與
+執行腳本。Phase 2.1 的總覽與威脅模型見上層 `experiments/phase2_1_provenance/README.md`。
 
 ---
 
