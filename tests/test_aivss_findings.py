@@ -40,9 +40,25 @@ def test_f2_is_high_8_6():
     assert r["aivss_severity"] == "High"
 
 
+def test_f3_is_critical_9_7():
+    # Phase 1 reasoning_hijack: same unauthorized-reset impact as F1 but PR:N
+    # (no privileges -- a public-form note), so it scores higher than F1.
+    r = af.score_all()["findings"]["F3"]
+    assert r["cvss_v4_base"] == 9.3
+    assert r["aivss_score"] == 9.7
+    assert r["aivss_severity"] == "Critical"
+    assert r["threat_multiplier"] == 0.97
+    assert r["mitigation_factor"] == 1.0
+
+
 def test_f1_outranks_f2():
     f = af.score_all()["findings"]
     assert f["F1"]["aivss_score"] > f["F2"]["aivss_score"]
+
+
+def test_f3_outranks_f1():
+    f = af.score_all()["findings"]
+    assert f["F3"]["aivss_score"] > f["F1"]["aivss_score"]
 
 
 def test_spec_provenance_recorded():
