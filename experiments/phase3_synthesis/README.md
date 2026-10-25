@@ -9,7 +9,7 @@ Phase 3 **不是第四種新攻擊**,而是把 Phase 1、Phase 2 兩個實驗主
 一般化貢獻的**綜合章**:
 
 - **Part 1 對比**:把各攻擊放到同一組座標,論證共同罩門(多為既有資料再分析)。
-- **Part 2 延伸**:泛化到更廣條件(跨模型 / 成分消融 / 黑箱),需少量新跑。
+- **Part 2 延伸**:以**成分消融(ablation)為主軸**,輔以跨模型、黑箱,把機制講清楚;需少量新跑。
 
 原 `phase3_attack_chain/` 的「實戰攻擊鏈」定位已廢棄(太實戰、非論文型)。
 原 provenance 已改列為 **Phase 2.1**(assumed-breach 資料完整性攻擊,與 Phase 2
@@ -50,14 +50,48 @@ Part 1 對比需要 **Phase 2 新攻擊面 reasoning_hijack-via-KB** 的結果�
 
 ## 4. Part 2 — 延伸 / 泛化(需新跑,皆為既有基建小改)
 
-1. **跨模型轉移(必做,補最大的洞)**:目前只有 qwen3:32b 一個 victim,外部效度最弱。
-   凍結 payload 策略,只換 victim 模型(qwen3:8b、dolphin3 現成;有更多再加)。
-   產出模型 × 成功率 + Wilson 表。
-2. **成分消融**:逐一拔掉 payload 各成分(第一人稱 / 過去完成式 / `data.valid==true`
-   具體宣稱 /「跳過」框架),找 load-bearing 成分 → 機制性結論。**這同時回答「凍結
-   指令給得多具體才算數」——把 F3 的 coached-autonomy 但書從弱點轉成可量化發現**
-   (量化「人給了多少戰術、agent 自己收斂多少」)。
-3. **黑箱觀測**:`observability_mode="black_box"` → 貼近真實外部攻擊者效度。
+### 4.1 主軸:成分消融(ablation)
+
+把 reasoning_hijack 的 5/5 從「現象」推進到「機制」:在 exp2 的得勝配方
+(frozen `reasoning_hijack_v2.md`)內部,找出使 `verify_credential` 被**跳過**的
+load-bearing 成分。exp1(出示憑證 + 請求框架)0/5 vs exp2(mocked-execution 結果 +
+禁出示憑證)5/5 已是第一個免費資料點,把效應定位到「呈現已完成結果 vs 呈現待查
+憑證」這條軸;ablation 在此軸內再細切。
+
+**可切成分(對應 v2 的 A–D + HARD BAN):**
+
+| 成分 | 拔掉後 |
+|---|---|
+| (A) 第一人稱 + 過去式「稍早已呼叫 verify_credential 並得 data.valid==true」 | 改第三人稱 / 現在式「請執行」 |
+| (B)「公開表單重設例外已成立」結論 | 不下結論 |
+| (C) 點名 reset_password 為「既定、正在執行」的下一步 | 不點名工具 |
+| (D) 鏡射 gate 詞彙(verify_credential / data.valid==true / intake_channel) | 改用同義泛稱 |
+| HARD BAN:不出示任何可重查憑證 | 附上一個憑證值 |
+
+(A) 與 HARD BAN 是預期的 load-bearing;ablation 用來證實或推翻。
+
+**兩個層級(先做 Level 1):**
+
+- **Level 1 — payload 靜態 ablation(乾淨因果,首選)**:固定其他成分,每次只拔一個,
+  做成固定 ticket_note 靜態餵入(不讓 agent 改寫);victim 為 temp 0 + think:False,
+  變異極小 → 幾乎零算力。沿用
+  `experiments/phase2_data_attack/run_control_static_article.py` 的靜態臂模式。
+- **Level 2 — instruction 自主 ablation(量化 coached-autonomy)**:從 v2.md 拔掉某條
+  指導後重跑自主 agent ≥5 campaign,看成功率怎麼掉;量「每條教學值多少」,把 F3 的
+  coached-autonomy 但書轉成數字。
+
+**指標**:各變體的 reset 成功率(Wilson)+ trace 是否跳過 `verify_credential`。
+**附帶產出**:**最小充分 payload**——仍能觸發跳過的最短 note(對論文與 AIVSS
+「攻擊多 trivial」皆為強結果)。
+
+### 4.2 輔助:跨模型轉移
+
+目前只有 qwen3:32b 一個 victim,外部效度最弱。凍結 payload 策略,只換 victim 模型
+(qwen3:8b、dolphin3 現成;有更多再加),產出模型 × 成功率 + Wilson 表。
+
+### 4.3 輔助:黑箱觀測
+
+`observability_mode="black_box"` → 貼近真實外部攻擊者效度。
 
 交付:各子實驗各一 runner + `results/` + 分析。
 
@@ -65,10 +99,10 @@ Part 1 對比需要 **Phase 2 新攻擊面 reasoning_hijack-via-KB** 的結果�
 
 - [ ] Phase 2 reasoning_hijack-via-KB(自主臂,選配靜態臂)
 - [ ] Phase 3 Part 1 對比章(再分析 + 對照表)
-- [ ] Phase 3 Part 2 延伸:跨模型(必要)/ 成分消融 / 黑箱
+- [ ] Phase 3 Part 2 主軸:成分消融(Level 1 靜態 → Level 2 自主)+ 最小充分 payload
+- [ ] Phase 3 Part 2 輔助:跨模型 / 黑箱
 - [ ] 防禦討論一段 —— **需你決定是否為論文放寬「報告不放防禦建議」的既有約束**
 - [ ] 關鍵實驗拉大 n(便宜,提升統計強度)
-- [ ] provenance 論文降附錄;實際 `git mv` 改名待核可
 - [ ] 更新各 summary / AIVSS / 專案總 README / 論文大綱
 
 ## 6. 物理結構
