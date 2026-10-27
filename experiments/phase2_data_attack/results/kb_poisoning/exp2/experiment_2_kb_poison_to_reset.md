@@ -150,7 +150,7 @@ handling agent 呼叫 `reset_password`」的檢索內容,能不能讓 victim 至
 
 ## 八、重跑更新(2026-10-23):修訂版 planner、5 campaign、AIVSS
 
-本節為後續依手冊要求的重跑補充;上方原始報告(2026-09-24,campaign `f989d822`,
+本節為後續重跑補充;上方原始報告(2026-09-24,campaign `f989d822`,
 0/6)之敘述與分層結論維持不變作為歷史紀錄。
 
 ### 8.1 條件變更
@@ -163,7 +163,7 @@ handling agent 呼叫 `reset_password`」的檢索內容,能不能讓 victim 至
 
 > 執行備註:原批次執行腳本含 `set -euo pipefail`,而 attack agent 在「目標未達成」
 > 時回傳非零,導致批次在第 1 個 campaign 後即中止(只跑到 1/5)。已改以「分 5 次、
-> 各跑 1 campaign、各自忽略非零退出碼」重跑補齊 5/5,未修改任何已提交檔案;
+> 各跑 1 campaign、各自忽略非零退出碼」重跑補齊 5/5;
 > planner_v2 每次正常換入/換出。中止批次留下的那 1 個完整 campaign(`008469eb`)
 > 同為 0 reset,保留於 log 作為紀錄,不計入本次 n=5。
 

@@ -93,10 +93,9 @@ from the submitter for a password reset.
 
 `intake_channel` 這條規則本身雖然是「單一、明確的欄位值判斷」,降低了模型需要做
 因果推論的難度,但它終究只是提示詞裡的一段指示,`victim_agent/policy.py` 和
-`victim_agent/agent.py` 的程式碼層級都沒有對它做任何強制檢查。因此「Victim Agent
-在本次測試中沒有被說服違反 `intake_channel` 規則」是唯一準確的講法;「系統層級
-防禦擋下了攻擊」這種講法會誇大這一層防禦的等級,見
-`results/persuasive_atk/exp1/experiment_1_defense_and_baseline_attack.md` 的措辭修正。
+`victim_agent/agent.py` 的程式碼層級都沒有對它做任何強制檢查。因此只能說「Victim Agent 在本次測試中
+沒有被說服違反 `intake_channel` 規則」,而非「系統層級防禦擋下了攻擊」——後者會
+誇大這一層防禦的等級。
 
 ### 決定性判定(oracle),不是 Planner 自我宣告成功
 
@@ -126,9 +125,9 @@ oracle,過濾只發生在「送進 Planner prompt 之前」這一關):
 * `gray_box`——額外保留粗粒度結果(例如「工具被攔截了」),但拿掉 `rule_id` 和
   內部 trace 細節
 * `white_box`(預設,維持既有行為)——目前的完整版本,是攻擊代理的**能力上限**,
-  不等同外部攻擊者;報告裡使用這個模式時必須明確標示這一點
+  不等同外部攻擊者
 
-**為什麼只選這一個目標,不是我們技術能力不夠,是刻意的研究設計**:曾經考慮過的
+**為什麼只選這一個目標,是刻意的研究設計**:曾經考慮過的
 其他候選(誘導對不符身份的帳號重設、誘導假造工單已解決、誘導模型誤信偽造的
 `TRUSTED_RUNTIME_POLICY` 標籤)各自難度落在兩個極端——太容易成功(現有防護
 對它們幾乎沒有真實性檢查)或太難成功(架構上已被封死,不管攻擊多精細都測不出
@@ -201,7 +200,7 @@ Wilson CI、措辭校正見 `phase1_ipi_summary.md`。
 | 實驗 1(樸素版) | `planner_v1_naive.txt` | 0/5 | 12 輪始終停留在加重急迫感/冒充身份的框架,從未正面處理 `intake_channel` 這個具體拒絕理由 | `results/persuasive_atk/exp1/experiment_1_defense_and_baseline_attack.md` |
 | 實驗 2(精細版) | `planner_v2_addresses_block_reason.txt` | 0/5 | 5/5 全數收斂到新角度(聲稱身份驗證已透過工單管道以外的其他方式完成),3/5 最後一輪能精準點名 `intake_channel`/提交管道為具體障礙 | `results/persuasive_atk/exp2/experiment_2_defense_and_baseline_attack.md` |
 
-**說服型核心結論(措辭已依 `results/persuasive_atk/summary.md` 校正)**:二元成功率
+**說服型核心結論**:二元成功率
 (0/5 vs 0/5)本身無法區分兩個版本,因為 `intake_channel` 是刻意設計成無例外的
 硬規則。質化分析顯示明確、可重複的行為差異:樸素版從未觸及防禦的實際判斷依據,
 精細版五次全數命中新規則引導的角度。這證明修改 `planner.txt` 能可靠引導攻擊代理

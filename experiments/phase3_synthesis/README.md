@@ -1,7 +1,7 @@
 # Phase 3:綜合(對比 + 延伸)實作規劃書
 
 狀態:**待核可的實作規劃**。本文件取代已移除的空殼 `phase3_attack_chain/`
-(commit 394effc)。本文不跑任何實驗、不改既有結果與 raw log;待拍板後才依本文實作。
+(commit 394effc)。
 
 ## 0. 定位
 
@@ -114,6 +114,3 @@ load-bearing 成分。exp1(出示憑證 + 請求框架)0/5 vs exp2(mocked-execut
 ## 7. 明確不做
 
 - 不開第四種全新攻擊;不做 attack_chain。
-- 不動 `victim_agent/`、`data/baseline/`、既有結果與 raw log;不 `git push`。
-- 不在未核可前搬動 / 改名 / 刪除任何既有 phase 目錄。
-- 任何新跑前先 `nvidia-smi` 確認 GPU 無非 ollama 佔用,並取得你的 go-ahead。

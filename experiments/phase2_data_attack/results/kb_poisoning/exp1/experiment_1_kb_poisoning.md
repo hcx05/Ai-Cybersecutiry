@@ -177,7 +177,7 @@ search_knowledge_base」。但 planner 的 `final_decision` 卻自述「成功�
 
 ## 八、重跑更新(2026-10-23):修訂版 planner、5 campaign、AIVSS
 
-本節為後續依手冊要求的重跑補充;上方原始報告(2026-09-24,campaign `47307db2`)
+本節為後續重跑補充;上方原始報告(2026-09-24,campaign `47307db2`)
 之敘述與方法論(含 oracle 假陰性的發現與修正)維持不變作為歷史紀錄。
 
 ### 8.1 條件變更

@@ -1,7 +1,6 @@
 # Phase 2 新攻擊面:reasoning_hijack-via-KB(實作規劃書)
 
-狀態:**待核可的實作規劃,尚未執行**。本文件不跑任何實驗、不改 `victim_agent/`、
-不改既有結果與 raw log、不搬動任何既有 phase 目錄。待拍板後才依本文實作。
+狀態:**待核可的實作規劃,尚未執行。**
 
 定位:把 Phase 1 F3(reasoning_hijack, free-text / PR:N)的致勝技術——**偽造「安全
 檢查已完成」的第一人稱記憶(H-CoT mocked-execution,arXiv:2502.12893)**——搬到
@@ -75,9 +74,3 @@ Phase 2 的 **KB(RAG)管道、同權限基準(PR:H)**,成為 Phase 2 的第二�
   抑制了第一人稱記憶的可信度」——同樣是乾淨發現,且直接界定 Phase 3 對比的邊界。
 
 無論成敗都寫入 `results/` 並更新 Phase 2 summary;raw log 一律保留。
-
-## 5. 明確不做
-
-- 不動 `victim_agent/`、`data/baseline/`、既有結果與 raw log。
-- 不 `git push`;不在未核可前搬動 / 改名 / 刪除任何既有 phase 目錄。
-- GPU 未確認閒置前不開跑(`nvidia-smi` 查非 ollama 佔用)。
