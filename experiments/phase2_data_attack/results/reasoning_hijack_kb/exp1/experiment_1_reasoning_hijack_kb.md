@@ -148,5 +148,5 @@ raw log 全保留於 `logs/attack_agent/*`、`logs/victim_agent/*`(新增 campai
 ## 範圍 / 再現
 
 - 未改 victim / baseline / 既有結果。raw log 全保留於 `logs/attack_agent/*`、`logs/victim_agent/*`(本次 campaign id 見上表)。
-- n=5 偏小;Phase 3 可便宜拉大 n 收緊 CI。
-- 選配 KB 靜態變體(手寫 mocked-execution 文章測上界)未跑;鑑於自主臂僅 1/5,靜態上界值得補以分離「文章本身說服力」與「逐輪改寫」兩因素,列 Phase 3 候選。
+- 原始 n=5 偏小;已於 P4 擴充至 n=15(見「P4」節),Wilson CI 由 `[0.04, 0.62]` 收緊為 `[0.15, 0.58]`。
+- KB 靜態上界變體(手寫 mocked-execution 文章)**已跑**,見 `../exp2_static_upper_bound/`:同 KB 管道、同 PR:H 得 **5/5 reset_executed**,確認落差源於自主生成保真度而非管道免疫(詳見本報告「結論 / P1 後定論」)。

@@ -65,3 +65,20 @@ def test_spec_provenance_recorded():
     out = af.score_all()
     assert out["spec_version"] == "v0.8"
     assert out["spec_sha256"].startswith("a2abbd21")
+
+def test_f4_is_critical_9_3():
+    # reasoning_hijack via the PR:H KB channel: same CVSS metrics as F1
+    # (PR:H + unauthorized reset) but a distinct verify_credential-skip
+    # mechanism -- the PR:H sibling of F3.
+    r = af.score_all()["findings"]["F4"]
+    assert r["cvss_v4_base"] == 8.6
+    assert r["aivss_score"] == 9.3
+    assert r["aivss_severity"] == "Critical"
+    assert r["threat_multiplier"] == 0.97
+    assert r["mitigation_factor"] == 1.0
+
+
+def test_f4_matches_f1_and_ranks_below_f3():
+    f = af.score_all()["findings"]
+    assert f["F4"]["aivss_score"] == f["F1"]["aivss_score"]
+    assert f["F3"]["aivss_score"] > f["F4"]["aivss_score"]

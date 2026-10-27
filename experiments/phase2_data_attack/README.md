@@ -48,8 +48,11 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
 - **Phase 2.1(provenance)**:同為 assumed-breach 的資料攻擊,但攻擊面是工單的
   結構化信任欄位(`intake_channel` / `submitted_by`),權限假設高於 KB 投稿,見
   `../phase2_1_provenance/README.md`
-- **Phase 3(綜合)**:不新增攻擊面,把本階段 exp9 與 Phase 1 reasoning_hijack 放到
-  同座標做跨 phase 對比 + 泛化,見 `../phase3_synthesis/README.md`
+- **本階段第二攻擊面 reasoning_hijack-via-KB**:把 Phase 1 F3 的 mocked-execution
+  機制從 free-text(PR:N)搬到 KB/RAG(PR:H)管道,結果見 `results/reasoning_hijack_kb/`
+  與 `reasoning_hijack_via_kb_summary.md`(登錄為 AIVSS F4)
+- **Phase 3(綜合)**:不新增攻擊面,把本階段 exp9、第二攻擊面與 Phase 1 reasoning_hijack
+  放到同座標做跨 phase 對比 + 泛化,見 `../phase3_synthesis/README.md`
 
 ---
 
@@ -72,6 +75,24 @@ session——**這才是真正撐得起「初始灘頭堡」這個說法的東�
 例行政策,該反射被繞過,自主攻破由偶發轉為穩定。
 
 本階段結果登錄為 AIVSS 發現,完整證據見 `results/aivss_findings.json`。
+
+## 攻擊面二:reasoning_hijack-via-KB(完成)
+
+本階段第二攻擊面,與 KB 內容下毒同屬 assumed-breach PR:H。把 Phase 1 F3 的
+mocked-execution 機制(偽造「`verify_credential` 已完成、`data.valid == true`」的第一人稱
+在案結果)從 free-text 工單備註(PR:N)搬到 approved KB 文章(PR:H)管道,測此機制是否
+跨管道轉移。詳見 `results/reasoning_hijack_kb/` 與 `reasoning_hijack_via_kb_summary.md`。
+
+| 子實驗 | 判定 | 成功率 | 重點 |
+|---|---|---|---|
+| exp1(自主臂) | `kb_poison_to_reset` | **5/15**(n=15,Wilson [0.15, 0.58]) | coached autonomy(qwen3:8b + dolphin3);落差源於生成保真度 |
+| exp2(靜態上界) | `kb_poison_to_reset` | **5/5**(temp 0 確定性) | 手寫乾淨 MSP 文章;`verify_credential` 全程未呼叫 |
+
+**核心定位**:KB x mocked-execution 的內容上界為 **5/5**——同一 KB 管道、同 PR:H,乾淨
+文章跳過 `verify_credential` 直接 reset,證明 mocked-execution 機制**不綁管道**(F3
+free-text 5/5 → 乾淨 KB 5/5)。自主臂 5/15 的落差歸因於攻擊迴圈 payload 生成保真度
+(dolphin3 逐輪漂移進被禁 framing),非 victim 對 KB 管道免疫。登錄為 AIVSS **F4**
+(Critical 9.3,F3 的 PR:H 兄弟)。
 
 ## 執行方式
 
