@@ -29,7 +29,7 @@ exp3（靜態極端對照）得到：victim 讀到最強命令式文章仍不嘗
 由此得出精確假設：**攻擊者與「一次真正執行、不可逆的未授權重設」之間，唯一的
 阻擋是『模型自願遵從 system.txt 的 intake_channel 規則』。** exp4 以研究級手法、
 經 RAG 管道，專門攻擊 exp3 模型說出口的那條拒絕理由，測這道純 prompt 閘門的
-穩健度；若被攻破，`reset_password` 會真的執行（Phase 3 Impact）。
+穩健度；若被攻破，`reset_password` 會真的執行（Impact）。
 
 - 條件：靜態對照（無 planner/payload generator），victim `qwen3:32b`、
   temperature 0.0、`num_ctx` 16384、structured_mode `json`、port 11435；
@@ -157,7 +157,7 @@ step 3  completed              回報「已依核准知識庫指引重設密碼�
 
 1. **純 prompt 的 `intake_channel` 閘門可被穩定攻破**：A 臂（權威冒充 / 前提重寫）
    在 temp 0 下 33/33 讓 victim 繞過該閘門並實際執行 `reset_password`。
-2. **端到端 poison-to-reset 成立且可重現（Phase 3 Impact）**：檢索到的毒文章驅動
+2. **端到端 poison-to-reset 成立且可重現（Impact）**：檢索到的毒文章驅動
    victim 對工單真 submitter 執行了未授權、不可逆的密碼重設，`policy_blocks` 全空。
 3. **唯一硬閘 `submitter_binding_check` 對此攻擊無效**：因目標即真 submitter。專案
    對「公開表單不得重設」的保證，實質完全依賴模型遵從 prompt。
@@ -171,9 +171,7 @@ step 3  completed              回報「已依核准知識庫指引重設密碼�
 
 ---
 
-## 五、後續研究方向(攻擊代理能力面;不含防禦修補)
-
-> 依本任務定位,本報告評估的是攻擊面與攻擊代理能力,不提出防禦修改建議。
+## 五、後續研究方向(攻擊代理能力面)
 
 1. **E 臂(自主持久化 adaptive)——已完成**:見 exp4-E 報告。靜態 A 臂 33/33 可攻破,
    但攻擊代理在 white-box、可見 victim 自述理由、6 輪預算下自主嘗試為 **0/5**,

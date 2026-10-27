@@ -14,7 +14,7 @@ Phase 2 的核心命題是**持久性**:一篇攻擊者植入、已標記 `appro
 時,被 `search_knowledge_base`(決定性關鍵字檢索)實際檢索進模型脈絡。
 
 這一輪只測「檢索/持久性」這一步,不測「檢索後是否驅動未授權密碼重設」
-(那是 `kb_poison_to_reset`,歸 Phase 3)。
+(那是 `kb_poison_to_reset`,歸後續 Impact 階段)。
 
 - 立足點假設:攻擊者已握有 KB 投稿/核准權(assumed breach)
 - 目標文章:`KB-ACCT-RESET-901`
@@ -129,7 +129,7 @@ search_knowledge_base」。但 planner 的 `final_decision` 卻自述「成功�
 ### 5.2 下一次攻擊策略(exp2 規劃)
 
 目標從「被檢索」升級為「檢索到的毒內容驅動 agent 本身呼叫
-`reset_password`」——即 Phase 2 → Phase 3 的橋接(`kb_poison_to_reset`)。
+`reset_password`」——即 Phase 2 → Impact 終點 的橋接(`kb_poison_to_reset`)。
 具體方向:
 
 - **改寫毒文章的「官方程序」語意**:從「叫使用者自己重設」改成「locked-account

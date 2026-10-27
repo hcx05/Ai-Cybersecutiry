@@ -26,7 +26,7 @@
 **結論:攻擊者與「一次真正執行、不可逆的未授權重設」之間,唯一阻擋是『模型
 自願遵從 system.txt 的 intake_channel 規則』。** 若毒文章能讓模型送出
 `reset_password(TICKET-004, r.suzuki@example.test)`,policy 與 submitter_binding
-都會通過 → reset 執行成功。這把 Phase 2 接上 Phase 3(Impact)。
+都會通過 → reset 執行成功。這把 Phase 2 接上 Impact 終點。
 
 研究問題:**當不可信內容改走 RAG(被當成「已核准知識庫」的較高信任管道)、
 且攻擊專門針對模型在 exp3 說出口的拒絕理由時,這道純 prompt 的 intake_channel

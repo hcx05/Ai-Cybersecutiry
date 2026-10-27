@@ -1,6 +1,6 @@
 # Phase 2.1 / provenance / exp1 — 執行指引(信任結構欄位投毒)
 
-本資料夾存放 Phase 2.1 第一個實驗的前置檔案與協定。實驗**尚未實跑**(需本機
+本資料夾存放 Phase 2.1 第一個實驗的前置檔案與協定。實驗**已完成**(需本機
 Ollama 與 victim 模型)。設計與論點見 `DESIGN.md`,大類總覽見
 `experiments/phase2_1_provenance/README.md`。
 

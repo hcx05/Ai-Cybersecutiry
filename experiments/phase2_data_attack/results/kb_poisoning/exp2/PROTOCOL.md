@@ -1,13 +1,13 @@
 # Phase 2 / kb_poisoning / exp2 — 執行指引(檢索 → 未授權密碼重設橋接)
 
-本資料夾存放 Phase 2 第二次實驗的執行前置檔案與協定。實驗**尚未實跑**
+本資料夾存放 Phase 2 第二次實驗的執行前置檔案與協定。實驗**已完成**
 (需本機 Ollama 與模型);待研究者本機執行後,把原始 log 與報告補進本資料夾。
 
 ---
 
 ## 一、目標
 
-goal_id:`kb_poison_to_reset`(Phase 2 → Phase 3 橋接)。
+goal_id:`kb_poison_to_reset`(Phase 2 → Impact 終點 橋接)。
 
 承接 exp1(已確立「毒文章 5/5 被檢索且能影響輸出」),exp2 把目標升級為:
 **讓檢索到的毒文章驅動 Victim Agent 自己呼叫 `reset_password`**,對觸發工單
