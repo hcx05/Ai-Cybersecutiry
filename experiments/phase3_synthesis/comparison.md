@@ -32,9 +32,9 @@
 | **(2)** | `free-text ticket_note` | `PR:N` | `persuasion` (`trusted-routine-policy`) | `0/5` (0%) | `approx [0, 0.43]` | `9` | Phase 3 P2 (`prereq_freetext_trusted_routine_policy`)<br>`experiments/phase3_synthesis/prereq_freetext_trusted_routine_policy` |
 | **(3)** | `KB article` | `PR:H` | `persuasion` (`trusted-routine-policy`) | `5/5` (100%) | `[56.6, 100]%` | `6` | Phase 2 `exp9`<br>`experiments/phase2_data_attack/results/kb_poisoning/exp9` |
 | **(4a)** | `KB article` | `PR:H` | `mocked-execution` (Static Upper Bound) | `5/5` (100%)* | N/A (`temp 0` 確定性重跑)* | `1` (5 reruns) | Phase 2 P1 (`exp2_static_upper_bound`)<br>`experiments/phase2_data_attack/results/reasoning_hijack_kb/exp2_static_upper_bound` |
-| **(4b)** | `KB article` | `PR:H` | `mocked-execution` (Autonomous Loop) | `1/5` (20%)<br>`[PENDING P4: n=15 ASR 待補]` | `[0.04, 0.62]`<br>`[PENDING P4: n=15 Wilson 95% CI 待補]` | `6` | Phase 2 `exp1`<br>`experiments/phase2_data_attack/results/reasoning_hijack_kb/exp1` |
+| **(4b)** | `KB article` | `PR:H` | `mocked-execution` (Autonomous Loop) | `1/5` (20%)<br>彙整 $n=15$:**`5/15` (33.3%)** | `[0.04, 0.62]`<br>$n=15$:**`[0.15, 0.58]`** | `6` | Phase 2 `exp1`<br>`experiments/phase2_data_attack/results/reasoning_hijack_kb/exp1` |
 
-> *註:Cell (4a) P1 為單一人工撰寫乾淨文章於受害者 `temp 0` 下之 5 次確定性重跑(deterministic probe with 5 reruns),並非 5 個獨立樣本(NOT 5 independent samples)。Cell (4b) 擴充樣本數至 $n=15$ 之 P4 實驗目前執行中(IN PROGRESS)。
+> *註:Cell (4a) P1 為單一人工撰寫乾淨文章於受害者 `temp 0` 下之 5 次確定性重跑(deterministic probe with 5 reruns),並非 5 個獨立樣本(NOT 5 independent samples)。Cell (4b) 擴充樣本數至 $n=15$ 之 P4 實驗已完成(COMPLETED,2026-10-27):原始 5 活動(`1/5`)與新增 10 活動(`4/10`)彙整為 `5/15`(33.3%)。
 
 ### 各晶格實驗結果明細
 
@@ -54,7 +54,7 @@
 
 4. **Cell (4) `KB` × `mocked-execution`(`PR:H`,Phase 2 P1 靜態上界 vs. `exp1` 自動化迴圈)**:
    * **靜態上界探針(P1,`exp2_static_upper_bound`)**:ASR 為 **`5/5`**。此實驗使用單一人工精確構造、未觸發禁用框架之乾淨文章,在受害者 `temp 0` 設定下重複執行 5 次,屬於確定性存在性探針(deterministic probe)。
-   * **自動化迴圈(`exp1`)**:ASR 降至 **`1/5`**,Wilson 95% CI 為 **`[0.04, 0.62]`**,回合預算為 **`6`**。
+   * **自動化迴圈(`exp1`)**:原始 $n=5$ 之 ASR 為 **`1/5`**;P4 擴充至 $n=15$ 後彙整為 **`5/15`(33.3%)**,Wilson 95% CI 自 **`[0.04, 0.62]`** 收緊為 **`[0.15, 0.58]`**,回合預算為 **`6`**。
    * **`1/5` 與 `5/5` 落差之歸因分析**:此落差源於**攻擊端載荷生成保真度(attacker payload-generation fidelity)**,而非受害者對知識庫通道之免疫。在 `exp1` 的 5 個自動化活動中,載荷生成器 `dolphin3` 有 **4 個活動**漂移並違反了凍結系統指令中明令禁止之框架(FORBIDDEN framings:如將文章偽裝為系統日誌 `log`、活動歷史 `activity-history` 或歷史案例 `past-cases`)。後續 P3 漏斗重分析(funnel re-analysis)證實:**檢索並非瓶頸**(28 個總回合中有 **26 個回合**成功檢索到毒化文章,即 `26/28`),而是失真的偽造框架觸發了受害者對公開表單工單之懷疑反射(public-form suspicion reflex),使代理在進入推理跳躍(reasoning-skip)之前即先一步將請求路由至 `needs_human_review`。
 
 ---
@@ -120,9 +120,9 @@
 3. **小樣本自動化實驗($n=5$)之信賴區間寬度**:
    目前所有自動化攻擊分支(F3、P2、`exp9`、`exp1`)之獨立活動樣本數均為 **$n=5$**。在 $n=5$ 下,即便觀測到極端比例(如 `5/5` 或 `0/5`),其雙尾 95% Wilson 信賴區間仍相當寬廣(`5/5` 對應 **`[56.6, 100]%`**;`0/5` 對應 **`approx [0, 0.43]`**;`1/5` 對應 **`[0.04, 0.62]`**)。
 4. **P4 擴充實驗進行中(Pending Enlargement to $n=15$)**:
-   針對變異較大之 Cell (4b) `exp1`(`KB` × `mocked-execution` 自動化迴圈),將樣本數由 $n=5$ 擴充至 **$n=15$** 之 **P4 實驗目前正在執行中(IN PROGRESS)**。待 P4 完成後,將於下述預留位置更新其點估計與信賴區間:
-   * **`exp1` 擴充後攻擊成功率(ASR, $n=15$)**:`[PENDING P4: n=15 ASR 待補]`
-   * **`exp1` 擴充後 Wilson 95% CI($n=15$)**:`[PENDING P4: n=15 Wilson 95% CI 待補]`
+   針對變異較大之 Cell (4b) `exp1`(`KB` × `mocked-execution` 自動化迴圈),將樣本數由 $n=5$ 擴充至 **$n=15$** 之 **P4 實驗已完成(COMPLETED,2026-10-27)**。原始 5 活動 `1/5` 與新增 10 活動 `4/10` 彙整,點估計與信賴區間如下:
+   * **`exp1` 擴充後攻擊成功率(ASR, $n=15$)**:`5/15` = **33.3%**
+   * **`exp1` 擴充後 Wilson 95% CI($n=15$)**:**`[0.15, 0.58]`**(區間仍偏寬,但已較 $n=5$ 之 `[0.04, 0.62]` 收緊,且下界自 `0.04` 升至 `0.15`,排除「近乎從不成功」之假設)
 
 ---
 
@@ -133,6 +133,6 @@
 1. **不主張通道格式與攻擊者權限之因子獨立性(No Channel-vs.-Privilege Factor Independence)**:
    依 Gate B2 決策,本章不宣稱 `KB` 與 `free-text` 之間的差異可獨立歸因於檢索介面格式或特權等級之單一因子;兩者在威脅模型中係不可分割之共線結構。
 2. **在 P4 完成前,不對小樣本($n=5$)自動化攻擊率作窄幅點估計宣稱(No Narrow Point-Estimate Claims on Small $n$)**:
-   在 $n=5$ 的樣本規模下,本章僅依賴跨晶格之極端對比(`0/5` vs. `5/5`)論證結構性交叉效應,不將 `1/5`(Wilson CI `[0.04, 0.62]`)視為收斂後之精確母體生成成功率;對 `KB` × `mocked-execution` 自動化攻擊率之精確量化須待 P4($n=15$)完成後始得確立。
+   在 $n=5$ 的樣本規模下,本章僅依賴跨晶格之極端對比(`0/5` vs. `5/5`)論證結構性交叉效應,不將 `1/5`(Wilson CI `[0.04, 0.62]`)視為收斂後之精確母體生成成功率;對 `KB` × `mocked-execution` 自動化攻擊率之精確量化已由 P4($n=15$)更新為 `5/15`(33.3%,Wilson CI `[0.15, 0.58]`);該點估計落在 `0/5` 與 `5/5` 兩極端之間,支持交叉效應之結構性論證。
 3. **不將靜態上界探針(P1)等同於自動化攻擊能力**:
    P1 之 `5/5` 僅證明受害者模型在面對合規 H-CoT 載荷時缺乏跨通道防禦力,不代表受限之小型攻擊模型(`dolphin3`)在無人工干預下具備同等之自然語言偽裝成功率。
