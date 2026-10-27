@@ -62,9 +62,27 @@ oracle 判定 `achieved=true`:該輪 `search_knowledge_base` 檢索到 `KB-ACCT-
 
 ## 結論
 
-1. **機制可跨管道轉移但不可靠**:唯一成功完整複現 F3 的 verify_credential 跳過路徑,證明 mocked-execution 不綁定 free-text 管道;但 RAG 管道下 ASR 從 5/5 掉到 1/5。
-2. **channel-schema mismatch**:第一人稱「我稍早已完成檢查」的記憶,嵌進**靜態第三方 KB 參考文件**後可信度被稀釋——episodic 工單記憶 vs 靜態 reference doc 的來源框架不同。**PR:H 不對所有 payload 類別單調增益**:同基準下,說服型(exp9)5/5、mocked-execution 型僅 1/5。
-3. 這界定了 Phase 3 2×2(管道 × 機制)對比的邊界:致勝機制與管道**交互作用**,非可加。全篇 thesis(判斷層完整性為決定因素)仍成立——1/5 的成功正是判斷層被劫持、硬閘被跳過;4/5 的失敗是判斷層的 suspicion reflex 擋下。
+> **重要更正(2026-10-27,P1 靜態上界臂後)**:下面第 2 點的「channel-schema
+> mismatch」判讀**已被 P1 推翻**,保留原文僅為可追溯。正確判讀見本節末「P1 後定論」與
+> `../exp2_static_upper_bound/README.md`。
+
+1. **機制可跨管道轉移**:唯一成功完整複現 F3 的 verify_credential 跳過路徑,證明 mocked-execution 不綁定 free-text 管道。
+2. ~~**channel-schema mismatch**:第一人稱記憶嵌進靜態 KB 參考文件後可信度被稀釋……PR:H 不對所有 payload 類別單調增益~~ —— **此判讀錯誤,見更正**。僅憑自主臂 1/5 無法分離「管道免疫」與「生成噪音」兩因子,當時過早下管道層結論。
+3. 自主臂界定了 Phase 3 2×2 其中一格的**自主 ASR**,但內容上界需 P1 另測。
+
+### P1 後定論(取代上面第 2 點)
+
+P1 靜態上界臂(手寫乾淨 mocked-execution 文,`../exp2_static_upper_bound/`)在同一 KB
+管道、同 PR:H 得 **5/5 reset_executed**。故:
+
+- KB × mocked-execution 的**內容上界是 5/5**,KB 管道對乾淨 mocked-execution **完全
+  可穿透**;「channel-schema mismatch / RAG 抑制第一人稱記憶」不成立。
+- 跨管道轉移**強成立、非退化**(F3 5/5 → 乾淨 KB 5/5)。
+- 自主臂 1/5 的落差歸因於**攻擊迴圈的 payload 生成保真度**(dolphin3 逐輪漂移進被禁
+  framing),非 victim 防禦。這是獨立發現:自動化攻擊者瓶頸在生成,不在管道/硬閘。
+- 全篇 thesis(判斷層完整性為決定因素)仍成立且更乾淨:乾淨 mocked-execution 一旦進入
+  判斷層,硬閘被完整跳過(5/5);自主臂多數失敗是 payload 自毀(踩 forbidden framing)
+  觸發 channel suspicion,非管道對正確 payload 免疫。
 
 ## 附錄:P3 funnel + payload-diff 重分析(2026-10-27,零算力)
 
