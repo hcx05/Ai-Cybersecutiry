@@ -14,20 +14,10 @@
 | Victim Agent | GPU 0 | `127.0.0.1:11435` |
 | Attack Agent（planner + payload generator） | GPU 1 | `127.0.0.1:11436` |
 
-> **目前 GPU 狀態（2026-10-21）**
+> **目前 GPU 狀態（2026-10-27）：正常**
 >
-> 本機 NVIDIA 驅動處於**版本不一致**狀態，重開機前無法使用 GPU：
->
-> - 執行中的 kernel module：`580.173.02`（`/proc/driver/nvidia/version`）
-> - 已安裝的使用者空間函式庫 / DKMS：`580.178.04`
-> - `nvidia-smi` 會回報 `Failed to initialize NVML: Driver/library version mismatch`。
->
-> 成因是驅動套件被 `apt` 升級後尚未重開機套用新模組。**修法：重開機**（線上
-> 卸載 `nvidia` 模組不可行，模組正被佔用）。重開機後請確認 `nvidia-smi` 正常、
-> `dkms status` 顯示 `580.178` 已為目前 kernel 建置。
->
-> 在 GPU 修復前，下方的啟動指令仍可運作，但 Ollama 會自動**退回 CPU**；
-> `qwen3:32b` 在 CPU 上會非常慢，僅適合煙霧測試，不適合正式計時實驗。
+> `nvidia-smi` 正常回報兩張卡（GPU 0 RTX 4090 24 GB、GPU 1 RTX 4080 SUPER 16 GB），
+> 先前（2026-10-21）的驅動版本不一致已於重開機後解除。正式計時實驗可用 GPU。
 
 ---
 
@@ -94,8 +84,8 @@ export OLLAMA_HOST=127.0.0.1:11436
 ollama serve
 ```
 
-> GPU 修復前，`CUDA_VISIBLE_DEVICES` 會被忽略並退回 CPU；兩個 server 仍可
-> 同時啟動，只是共用 CPU、速度較慢。
+> 若 GPU 不可用（例如驅動問題），`CUDA_VISIBLE_DEVICES` 會被忽略並退回 CPU；
+> 兩個 server 仍可同時啟動，只是共用 CPU、速度較慢。目前 GPU 正常。
 
 確認 server 已就緒：
 
@@ -149,11 +139,9 @@ python3 experiments/phase2_data_attack/run_control_static_article.py
 
 ---
 
-## 7. 已知問題（2026-10-21）
+## 7. 已知問題
 
-兩項環境問題，正式計時實驗前需先解決：
-
-1. **GPU 驅動版本不一致** — 見第 1 節。重開機套用 `580.178` 模組即可，修復前只能 CPU。
+1. ~~**GPU 驅動版本不一致**~~ — 已於 2026-10-27 重開機後解除，`nvidia-smi` 正常（見第 1 節）。
 2. **`/mnt/shared_ssd`（`/dev/sdb`）掉線** — 下載模型期間該 SATA 碟從匯流排消失
    （`/sys/block` 已無 `sdb`），ext4 進入 `emergency_ro/shutdown`，其上資料不可讀。
    目前模型已改放健康的 `/mnt/ubuntu_data`（`sdc1`），不受影響。若要查修 `sdb`，
