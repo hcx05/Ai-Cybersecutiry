@@ -12,6 +12,18 @@ MITRE ATLAS。所有數字均來自已提交之 result JSON 與不可竄改的 `
 嚴格 JSON schema、port 11435;attack 端 `qwen3:8b`(planner)+ `dolphin3`
 (payload generator)、port 11436。victim 全程不動。
 
+**可重現性指紋(2026-10-28 稽核補註,F2)**:每個 campaign summary 另記
+`condition_fingerprint`(`attack_agent/agent.py`),是 `planner.txt` +
+`payload_generator.txt` + victim `system.txt` 三個 prompt 的 sha256、
+`CAMPAIGN_ENGINE_VERSION`、`observability_mode`、`campaign_mode` 等的合成雜湊——
+故**攻擊端與受害端 prompt 皆有指紋,非僅凍結指令**(本報告各處 sha256 之外的完整
+涵蓋)。已知**兩缺口**:(1) `cases.json`(goal / oracle 規格)**不在**
+`condition_fingerprint` 內;(2) victim / attack 模型的 **digest 只落在 raw summary、
+未進** `condition_fingerprint`。即換 goal 定義或換模型版本可能指紋相同而被
+`summarize_goal()` 誤併;引用結果時須另行核對當時的 `cases.json` 版本與模型 digest
+(後者可從 `logs/attack_agent/*summary.json` 取得)。此為揭露,未改指紋演算法(改之會
+破壞與歷史 run 的分組連續性)。
+
 ---
 
 # Part A — Phase 1 `reasoning_hijack`
