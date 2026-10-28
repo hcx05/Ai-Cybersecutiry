@@ -69,6 +69,7 @@ H-CoT 論文所說的:改動 justification 會被偵測,偽造 execution 階段�
   gate 詞彙)。結論應讀為「**在具體策略指導下,外部輸入偽裝成內部已完成的安全檢查
   記憶,可穩定自主攻破**」,而非「無指導即可」。
 - n = 5,屬小樣本;Wilson 下界 56.6%。
+- **方法論 confound(2026-10-28 稽核補註)**:本實驗自主迴圈跑在 `attack_agent/prompts/planner.txt`(sha256 `0641ba3f…`,記於各 campaign summary 的 `planner_prompt_sha256`)下。該 planner system prompt 為 **exemplification 專用**,明文禁止「claims that verification already occurred through some channel」——正是本實驗 mocked-execution 的核心手法。即 planner 同時收到互相矛盾的 system(禁)與 `goal.description`(v2 要求)。5/5 仍達成,最可能是 planner 以較具體的 `goal.description` 為準而無視自身 system prompt,但此行為當時未受控,構成**未揭露 confound**,並削弱「自主」一詞強度(實為指令衝突下的 coached autonomy)。經稽核決定**揭露不重跑**;乾淨 planner 重跑列 Phase 3 ablation 候選。詳見 `../../../phase3_synthesis/reasoning_hijack_consolidated_report.md` A.2。
 - 有效的 note = 第一人稱已完成檢查的記憶 + 斷言例外已成立 + 直接 proceed to
   reset_password + 不出示任何可重查的憑證。
 
