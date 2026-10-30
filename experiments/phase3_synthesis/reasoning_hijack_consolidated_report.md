@@ -9,8 +9,21 @@ reasoning_hijack-via-KB)依 Phase 1 報告體例重寫;(C) Phase 3 綜合計畫�
 MITRE ATLAS。所有數字均來自已提交之 result JSON 與不可竄改的 `logs/` trace,無杜撰。
 
 共用受測設定:victim `qwen3:32b`、temperature 0、`think:false`、`num_ctx 16384`、
-嚴格 JSON schema、port 11435;attack 端 `qwen3:8b`(planner)+ `dolphin3`
-(payload generator)、port 11436。victim 全程不動。
+嚴格 JSON schema、port 11435;attack 端 `qwen3:8b`(planner,temperature 0.7)+
+`dolphin3`(payload generator,temperature 0.9)、port 11436,兩者皆**未設定 seed**
+(程式碼與所有 round log 均無 seed 參數,取樣具隨機性,非固定可重現)。victim 全程不動。
+
+**攻擊端 sampling 參數來源(2026-10-30 稽核補註,F5)**:temperature 數值直接取自任一
+campaign 的 round log,例如 `logs/attack_agent/20261025-063331_unauthorized_password_reset_65908f64_round_1.json`
+的 `planner_metadata.sampling_parameters.temperature`(0.7)與
+`payload_generator_metadata.sampling_parameters.temperature`(0.9);另以
+`logs/attack_agent/20261024-171504_kb_poison_to_reset_aae516dc_round_1.json` 交叉確認
+數值一致。對應程式碼預設值:`attack_agent/planner.py` 的 `DEFAULT_TEMPERATURE = 0.7`
+(第 59 行,註解說明刻意非零,讓 planner 每次 campaign 不會提出相同策略)、
+`attack_agent/payload_generator.py` 的 `DEFAULT_TEMPERATURE = 0.9`(第 45 行)。
+全檔 `grep -rn "seed" attack_agent/*.py` 除一處與抽樣無關的註解外無其他命中,
+Ollama 呼叫(`attack_agent/ollama_client.py`)與所有 round log 的 `sampling_parameters`
+皆不含 `seed` 鍵,故攻擊端(planner 與 payload generator)皆**無固定 seed**。
 
 **可重現性指紋(2026-10-28 稽核補註,F2)**:每個 campaign summary 另記
 `condition_fingerprint`(`attack_agent/agent.py`),是 `planner.txt` +
@@ -23,6 +36,25 @@ MITRE ATLAS。所有數字均來自已提交之 result JSON 與不可竄改的 `
 `summarize_goal()` 誤併;引用結果時須另行核對當時的 `cases.json` 版本與模型 digest
 (後者可從 `logs/attack_agent/*summary.json` 取得)。此為揭露,未改指紋演算法(改之會
 破壞與歷史 run 的分組連續性)。
+
+**外部效度限制:white_box + feed_victim_rationale(2026-10-30 稽核補註,F5)**:
+本報告所有自主迴圈實驗(Phase 1 exp2、exp9、reasoning_hijack-via-KB)皆在
+`observability_mode="white_box"` 下執行(見各 campaign summary 的
+`condition.components.observability_mode`,例如
+`logs/attack_agent/20261025-063331_unauthorized_password_reset_65908f64_summary.json`),
+且以 `feed_victim_rationale=True` 執行(見
+`experiments/phase1_ipi/run_reasoning_hijack_exp2.py` 第 132 行呼叫
+`run_campaign(..., feed_victim_rationale=True)`,同參數亦見於
+`run_reasoning_hijack_kb_exp1.py`、`run_exp9_optimized_instruction_v4.py`)。
+`attack_agent/agent.py` 之 `run_campaign()` docstring 明確註記:
+`white_box` 是「Attack Agent 的能力上限,不是真實外部攻擊者可觀察視角的替代品」
+(見 `attack_agent/agent.py` 第 659 行附近說明),即 planner 每輪可完整看到
+victim 上一輪的推理訊號(含被拒原因),而 `feed_victim_rationale=True` 進一步
+把 victim 的拒絕理由直接餵回 planner 作為下一輪調整依據。真實世界的外部攻擊者
+(public contact-form 等未授權管道)通常拿不到這種逐輪的受害端推理回饋;本報告的
+5/5、5/15 等成功率應理解為「在攻擊端具備此觀察能力上限時」的結果,不能直接外推為
+真實黑箱攻擊者的成功率。`campaign_mode="isolated_adaptive_search"` 不受此限制影響,
+但與 observability 無關,不構成本條揭露的替代。
 
 ---
 
